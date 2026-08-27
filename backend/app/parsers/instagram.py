@@ -92,16 +92,8 @@ def _fetch_public_sync(url: str) -> Metrics:
     # Step 3: For Reels — use Playwright to intercept network JSON + embedded JSON
     shares = 0
     saves = 0
-    if "/reel/" in clean_url:
-        pw_likes, pw_comments, pw_views, pw_shares, pw_saves = _fetch_reel_via_playwright(clean_url, proxy_url)
-        # Playwright is the only source that returns shares/saves for Reels,
-        # so always use its result for those fields. For likes/comments/views
-        # prefer the embed/og values when available, fall back to Playwright.
-        likes = likes or pw_likes
-        comments = comments or pw_comments
-        views = views or pw_views
-        shares = pw_shares
-        saves = pw_saves
+    if not likes and not comments and "/reel/" in clean_url:
+        likes, comments, views, shares, saves = _fetch_reel_via_playwright(clean_url, proxy_url)
 
     if not likes and not comments and not views:
         raise ParserUnavailableError("Instagram did not expose engagement metrics")
@@ -448,9 +440,10 @@ async def fetch(url: str) -> Metrics:
     def _complete_enough(metrics: Metrics) -> bool:
         if not is_reel:
             return bool(metrics.likes or metrics.comments)
-        # Reels sources expose different subsets. Continue to other sources
-        # when Calcxi only returned likes/views.
-        return bool(metrics.views and metrics.likes and metrics.comments and metrics.hashtags)
+        # For Reels: Calcxi is the only source that returns shares/saves.
+        # If it got views + likes, that's good enough — don't lose its
+        # shares/saves just because comments or hashtags are missing.
+        return bool(metrics.views and metrics.likes)
 
     # Strategy 1: Calcxi (free — Reels only, returns views/shares/saves)
     if is_reel:
