@@ -1,0 +1,11 @@
+.git
+.gitignore
+.env
+.env.example
+*.md
+*.txt
+*.xlsx
+*.docx
+data/
+*.session
+accounts.txt

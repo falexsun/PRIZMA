@@ -1,0 +1,28 @@
+# docker-compose.prod.yml
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+services:
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      - web
+      - api
+
+  postgres:
+    ports: []  # Don't expose in production
+
+  redis:
+    ports: []  # Don't expose in production
+
+  api:
+    ports: []  # Only exposed through nginx
+
+  web:
+    ports: []  # Only exposed through nginx

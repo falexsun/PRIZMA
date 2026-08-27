@@ -1,0 +1,13 @@
+.venv/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+uploads/
+max_session/
+max_session.json
+instagram_session.json
+*.session
+celerybeat-schedule
+max_*.html
+max_*.txt
+max_*.log

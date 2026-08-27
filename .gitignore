@@ -1,0 +1,89 @@
+# === Environment & secrets ===
+.env
+*.pem
+*.key
+accounts.txt
+
+# === Python ===
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+.testvenv/
+.pytest_cache/
+
+# === Node / Next.js ===
+node_modules/
+.next/
+.next-build/
+out/
+*.tsbuildinfo
+
+# === Database & runtime ===
+*.db
+*.sqlite3
+data/*
+!data/.gitkeep
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# === Session files ===
+*.session
+instagram_session.json
+max_session/
+max_session.json
+celerybeat-schedule
+
+# === Parser diagnostics ===
+backend/max_*.html
+backend/max_*.txt
+backend/max_*.log
+
+# === OS ===
+.DS_Store
+Thumbs.db
+
+# === IDE ===
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# === Build artifacts ===
+*.zip
+*.xlsx
+
+# === Docker ===
+vpn/config/
+
+# === Nested duplicate ===
+content-tracker/
+
+# === Ad-hoc test scripts (root & backend) ===
+test_*.py
+test_*.txt
+backend/test_*.py
+backend/test_*.txt
+backend/check_*.py
+backend/create_*.py
+backend/upload_test*.py
+
+# === Ad-hoc debug/diagnostic markdown ===
+КАК_ПОЛУЧИТЬ_*.md
+КРИТИЧЕСКАЯ_*.md
+НЕ_ТОТ_COOKIE.md
+ПОПРОБУЙТЕ_СЕЙЧАС.md
+ПРАВИЛЬНОЕ_РЕШЕНИЕ.md
+ФИНАЛЬНОЕ_РЕЗЮМЕ.md
+ФИНАЛЬНЫЙ_СТАТУС.md
+ЧТО_ДЕЛАТЬ_СЕЙЧАС.md
+РЕЗЮМЕ.md
+INSTAGRAM_*.md
+TEST_INSTAGRAM_*.md
+SOCKS5_SUPPORT.md
+IMPLEMENTATION_REPORT.md
+GUIDE_SOURCE.md
+
+# === MiMoCode ===
+.mimocode/
