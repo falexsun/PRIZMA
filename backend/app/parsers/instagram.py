@@ -92,8 +92,16 @@ def _fetch_public_sync(url: str) -> Metrics:
     # Step 3: For Reels — use Playwright to intercept network JSON + embedded JSON
     shares = 0
     saves = 0
-    if not likes and not comments and "/reel/" in clean_url:
-        likes, comments, views, shares, saves = _fetch_reel_via_playwright(clean_url, proxy_url)
+    if "/reel/" in clean_url:
+        pw_likes, pw_comments, pw_views, pw_shares, pw_saves = _fetch_reel_via_playwright(clean_url, proxy_url)
+        # Playwright is the only source that returns shares/saves for Reels,
+        # so always use its result for those fields. For likes/comments/views
+        # prefer the embed/og values when available, fall back to Playwright.
+        likes = likes or pw_likes
+        comments = comments or pw_comments
+        views = views or pw_views
+        shares = pw_shares
+        saves = pw_saves
 
     if not likes and not comments and not views:
         raise ParserUnavailableError("Instagram did not expose engagement metrics")
@@ -466,7 +474,10 @@ async def fetch(url: str) -> Metrics:
                 timeout=30,
             )
             if result.likes or result.comments:
-                return _merge_metrics(result, calcxi_result)
+                merged = _merge_metrics(result, calcxi_result)
+                if is_reel:
+                    return await _ensure_reel_shares_saves(clean_url, merged)
+                return merged
         except asyncio.TimeoutError:
             pass
         except Exception:
@@ -494,3 +505,25 @@ async def fetch(url: str) -> Metrics:
         "INSTAGRAM_CONFIG_MISSING: Instagram requires proxy (NON_RU_PROXY) for direct GraphQL, "
         "or public Reel scraping via Calcxi."
     )
+
+
+async def _ensure_reel_shares_saves(url: str, metrics: Metrics) -> Metrics:
+    """If a Reel result has 0 shares and 0 saves, try Playwright as last resort."""
+    if metrics.reposts or metrics.saves:
+        return metrics
+    proxy_url = get_proxy_for_platform("instagram") or normalize_proxy(settings.instagram_proxy)
+    try:
+        _, _, _, pw_shares, pw_saves = await asyncio.wait_for(
+            asyncio.to_thread(_fetch_reel_via_playwright, url, proxy_url),
+            timeout=_INSTAGRAM_TIMEOUT,
+        )
+        return Metrics(
+            likes=metrics.likes,
+            reposts=metrics.reposts or pw_shares,
+            comments=metrics.comments,
+            saves=metrics.saves or pw_saves,
+            views=metrics.views,
+            hashtags=metrics.hashtags,
+        )
+    except Exception:
+        return metrics
