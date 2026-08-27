@@ -60,7 +60,7 @@ vpn/config/
 # === Nested duplicate ===
 content-tracker/
 
-# === Ad-hoc test scripts (root & backend) ===
+# === Ad-hoc test scripts (root & backend root only, NOT backend/tests/) ===
 test_*.py
 test_*.txt
 backend/test_*.py
@@ -68,6 +68,7 @@ backend/test_*.txt
 backend/check_*.py
 backend/create_*.py
 backend/upload_test*.py
+!backend/tests/
 
 # === Ad-hoc debug/diagnostic markdown ===
 КАК_ПОЛУЧИТЬ_*.md

@@ -10,6 +10,7 @@ _TRACKING_PARAMS = {
 
 _HOST_RULES: list[tuple[re.Pattern, str, Platform]] = [
     (re.compile(r"^(www\.)?vk\.(com|ru)$"), "vk.ru", Platform.vk),
+    (re.compile(r"^(www\.)?vkvideo\.ru$"), "vkvideo.ru", Platform.vk),
     (re.compile(r"^(www\.)?t\.me$"), "t.me", Platform.telegram),
     (re.compile(r"^(www\.)?telegram\.me$"), "t.me", Platform.telegram),
     (re.compile(r"^(www\.)?(youtube\.com|youtu\.be)$"), "youtube.com", Platform.youtube),
@@ -60,6 +61,10 @@ def normalize_url(raw_url: str) -> tuple[str, Platform]:
                 path = "/" + val
                 query = [(k, v) for k, v in query if k != param]
                 break
+        # vkvideo.ru/@username/video-XXX_YYY → /video-XXX_YYY
+        vkvideo_match = re.search(r"(/(?:wall|video|clip)-?\d+_\d+)", path)
+        if vkvideo_match and canonical_host == "vkvideo.ru":
+            path = vkvideo_match.group(1)
 
     normalized = urlunparse(("https", canonical_host, path, "", urlencode(query), ""))
     return normalized, platform
