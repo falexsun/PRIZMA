@@ -47,3 +47,15 @@ You can provide real default accounts without committing them to git.
 The setup script copies `account.txt` into the backend build context as `default_accounts.json`, and the backend seed creates users that do not already exist.
 
 Existing users are not overwritten on restart.
+
+## Updating
+
+For later project updates, run from the project root:
+
+```bat
+update.bat
+```
+
+The update script pulls the latest Git changes, refreshes the local accounts seed copy if `account.txt` is present, rebuilds the Docker images and restarts the containers.
+
+It does not delete `.env`, `.admin-login.txt`, uploaded files or the database folder.
