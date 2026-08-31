@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { TONE_CONFIG, PLATFORM_LABELS } from "@/lib/theme";
+import { formatCompactNumber, formatFullNumber } from "@/lib/numbers";
 import clsx from "clsx";
 
 export default function MessageCardPage() {
@@ -196,7 +197,7 @@ export default function MessageCardPage() {
   const formatReposts = (link: MessageDetail["links"][number]) =>
     link.platform === "instagram" && link.url_normalized.includes("/reel/") && link.latest_metrics?.reposts === 0
       ? "—"
-      : link.latest_metrics?.reposts ?? "—";
+      : formatCompactNumber(link.latest_metrics?.reposts);
 
   return (
     <PageLayout user={user}>
@@ -249,23 +250,23 @@ export default function MessageCardPage() {
       {/* Stats */}
       <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <div className="stat-card">
-          <div className="stat-value text-emerald-600 dark:text-emerald-400">
-            {message.si_total.toLocaleString("ru-RU")}
+          <div className="stat-value text-emerald-600 dark:text-emerald-400" title={formatFullNumber(message.si_total)}>
+            {formatCompactNumber(message.si_total)}
           </div>
           <div className="stat-label">Si</div>
         </div>
         <div className="stat-card">
-          <div className="stat-value">{sumViews.toLocaleString("ru-RU")}</div>
+          <div className="stat-value" title={formatFullNumber(sumViews)}>{formatCompactNumber(sumViews)}</div>
           <div className="stat-label">Просмотры</div>
         </div>
         <div className="stat-card">
-          <div className="stat-value">{sumLikes.toLocaleString("ru-RU")}</div>
+          <div className="stat-value" title={formatFullNumber(sumLikes)}>{formatCompactNumber(sumLikes)}</div>
           <div className="stat-label flex items-center gap-1">
             <ThumbsUp className="h-3 w-3" /> Лайки
           </div>
         </div>
         <div className="stat-card">
-          <div className="stat-value">{sumReposts.toLocaleString("ru-RU")}</div>
+          <div className="stat-value" title={formatFullNumber(sumReposts)}>{formatCompactNumber(sumReposts)}</div>
           <div className="stat-label flex items-center gap-1">
             <Repeat className="h-3 w-3" /> Репосты
           </div>
@@ -273,13 +274,13 @@ export default function MessageCardPage() {
       </div>
       <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-2">
         <div className="stat-card">
-          <div className="stat-value">{sumComments.toLocaleString("ru-RU")}</div>
+          <div className="stat-value" title={formatFullNumber(sumComments)}>{formatCompactNumber(sumComments)}</div>
           <div className="stat-label flex items-center gap-1">
             <MessageCircle className="h-3 w-3" /> Комментарии
           </div>
         </div>
         <div className="stat-card">
-          <div className="stat-value">{sumSaves.toLocaleString("ru-RU")}</div>
+          <div className="stat-value" title={formatFullNumber(sumSaves)}>{formatCompactNumber(sumSaves)}</div>
           <div className="stat-label flex items-center gap-1">
             <Bookmark className="h-3 w-3" /> Сохранения
           </div>
@@ -408,11 +409,11 @@ export default function MessageCardPage() {
                       )) : "—"}
                     </div>
                   </td>
-                  <td className="table-cell">{link.latest_metrics?.likes ?? "—"}</td>
-                  <td className="table-cell">{formatReposts(link)}</td>
-                  <td className="table-cell">{link.latest_metrics?.comments ?? "—"}</td>
-                  <td className="table-cell">{link.latest_metrics?.saves ?? "—"}</td>
-                  <td className="table-cell">{link.latest_metrics?.views ?? "—"}</td>
+                  <td className="table-cell metric-cell" title={formatFullNumber(link.latest_metrics?.likes)}>{formatCompactNumber(link.latest_metrics?.likes)}</td>
+                  <td className="table-cell metric-cell" title={formatFullNumber(link.latest_metrics?.reposts)}>{formatReposts(link)}</td>
+                  <td className="table-cell metric-cell" title={formatFullNumber(link.latest_metrics?.comments)}>{formatCompactNumber(link.latest_metrics?.comments)}</td>
+                  <td className="table-cell metric-cell" title={formatFullNumber(link.latest_metrics?.saves)}>{formatCompactNumber(link.latest_metrics?.saves)}</td>
+                  <td className="table-cell metric-cell" title={formatFullNumber(link.latest_metrics?.views)}>{formatCompactNumber(link.latest_metrics?.views)}</td>
                   <td className="table-cell"><SiBadge value={link.latest_metrics?.si ?? 0} /></td>
                   <td className="table-cell text-slate-500">
                     {link.latest_metrics ? new Date(link.latest_metrics.fetched_at).toLocaleString("ru-RU") : "—"}

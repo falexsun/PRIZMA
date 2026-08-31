@@ -32,6 +32,7 @@ import {
   PieChart as PieChartIcon,
 } from "lucide-react";
 import { PIE_COLORS, BRAND } from "@/lib/theme";
+import { formatCompactNumber, formatFullNumber } from "@/lib/numbers";
 
 const PIE_COLORS_ARRAY = PIE_COLORS;
 
@@ -56,7 +57,9 @@ function ChartTooltip({ active, payload, label }: CustomTooltipProps) {
         <div key={idx} className="flex items-center gap-2 text-sm">
           <div className="h-2 w-2 rounded-full" style={{ backgroundColor: entry.color }} />
           <span className="text-slate-600 dark:text-slate-300">{entry.name}:</span>
-          <span className="font-medium">{typeof entry.value === "number" ? entry.value.toLocaleString("ru-RU") : entry.value}</span>
+          <span className="font-medium tabular-nums" title={typeof entry.value === "number" ? formatFullNumber(entry.value) : String(entry.value)}>
+            {typeof entry.value === "number" ? formatCompactNumber(entry.value) : entry.value}
+          </span>
         </div>
       ))}
     </div>
@@ -155,17 +158,17 @@ export default function AdminPage() {
       <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <div className="stat-card">
           <FileText className="h-5 w-5 text-slate-400" />
-          <div className="stat-value mt-2">{totalMessages.toLocaleString("ru-RU")}</div>
+          <div className="stat-value mt-2" title={formatFullNumber(totalMessages)}>{formatCompactNumber(totalMessages)}</div>
           <div className="stat-label">Публикаций</div>
         </div>
         <div className="stat-card">
           <TrendingUp className="h-5 w-5 text-slate-400" />
-          <div className="stat-value mt-2">{totalSi.toLocaleString("ru-RU")}</div>
+          <div className="stat-value mt-2" title={formatFullNumber(totalSi)}>{formatCompactNumber(totalSi)}</div>
           <div className="stat-label">Общий Si</div>
         </div>
         <div className="stat-card">
           <BarChart3 className="h-5 w-5 text-slate-400" />
-          <div className="stat-value mt-2">{totalViews.toLocaleString("ru-RU")}</div>
+          <div className="stat-value mt-2" title={formatFullNumber(totalViews)}>{formatCompactNumber(totalViews)}</div>
           <div className="stat-label">Просмотров</div>
         </div>
         <div className="stat-card">
@@ -254,7 +257,7 @@ export default function AdminPage() {
                 </span>
                 {m.title}
               </span>
-              <span className="font-medium">{m.si_total.toLocaleString("ru-RU")}</span>
+              <span className="shrink-0 font-medium tabular-nums" title={formatFullNumber(m.si_total)}>{formatCompactNumber(m.si_total)}</span>
             </li>
           ))}
         </ol>

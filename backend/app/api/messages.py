@@ -2,7 +2,7 @@ import io
 from datetime import datetime, timezone
 
 import openpyxl
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -156,6 +156,37 @@ async def list_messages(
         page=page,
         page_size=page_size,
     )
+
+
+@router.post("/messages/links/parse")
+async def parse_message_links_file(file: UploadFile = File(...)) -> dict[str, list[str] | int]:
+    content = await file.read()
+    if len(content) > MAX_UPLOAD_SIZE_BYTES:
+        raise HTTPException(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            f"File too large: maximum size is {MAX_UPLOAD_SIZE_BYTES // (1024 * 1024)} MB",
+        )
+    try:
+        urls = parse_links_file(file.filename or "", content)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+    normalized_urls: list[str] = []
+    seen: set[str] = set()
+    skipped = 0
+    for raw_url in urls:
+        try:
+            normalized, _ = normalize_url(raw_url)
+        except UnsupportedUrlError:
+            skipped += 1
+            continue
+        if normalized in seen:
+            skipped += 1
+            continue
+        seen.add(normalized)
+        normalized_urls.append(raw_url)
+
+    return {"links": normalized_urls, "added": len(normalized_urls), "skipped": skipped}
 
 
 @router.post("/messages", response_model=MessageDetail, status_code=status.HTTP_201_CREATED)

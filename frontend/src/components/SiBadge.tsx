@@ -1,4 +1,5 @@
 import { SI_THRESHOLDS } from "@/lib/theme";
+import { formatCompactNumber, formatFullNumber } from "@/lib/numbers";
 
 export function SiBadge({ value }: { value: number }) {
   const { high, medium } = SI_THRESHOLDS;
@@ -10,8 +11,8 @@ export function SiBadge({ value }: { value: number }) {
       : "badge neutral";
 
   return (
-    <span className={colorClass}>
-      {value.toLocaleString("ru-RU")}
+    <span className={`${colorClass} max-w-full whitespace-nowrap tabular-nums`} title={formatFullNumber(value)}>
+      {formatCompactNumber(value)}
     </span>
   );
 }

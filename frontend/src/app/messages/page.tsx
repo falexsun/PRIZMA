@@ -10,6 +10,7 @@ import { AppHeader } from "@/components/AppHeader";
 import { SiBadge } from "@/components/SiBadge";
 import { PageLayout } from "@/components/PageLayout";
 import { useMe } from "@/lib/useMe";
+import { formatCompactNumber, formatFullNumber } from "@/lib/numbers";
 
 const TONE_LABELS: Record<string, string> = {
   positive: "Позитив",
@@ -180,7 +181,7 @@ export default function MessagesPage() {
                   <td className="table-cell">
                     <SiBadge value={m.si_total} />
                   </td>
-                  <td className="table-cell">{m.views_total.toLocaleString("ru-RU")}</td>
+                  <td className="table-cell metric-cell" title={formatFullNumber(m.views_total)}>{formatCompactNumber(m.views_total)}</td>
                   <td className="table-cell text-slate-500">{new Date(m.created_at).toLocaleDateString("ru-RU")}</td>
                   <td className="table-cell">
                     <div className="flex gap-1">

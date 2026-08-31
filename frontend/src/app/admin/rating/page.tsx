@@ -7,6 +7,7 @@ import type { RatingRow } from "@/lib/types";
 import { PageLayout } from "@/components/PageLayout";
 import { useMe } from "@/lib/useMe";
 import { Download, Trophy, Medal, Award } from "lucide-react";
+import { formatCompactNumber, formatFullNumber } from "@/lib/numbers";
 
 export default function AdminRatingPage() {
   const [period, setPeriod] = useState("30");
@@ -91,10 +92,10 @@ export default function AdminRatingPage() {
                     </div>
                   </td>
                   <td className="table-cell font-medium">{row.org_name}</td>
-                  <td className="table-cell">{row.messages_count}</td>
-                  <td className="table-cell font-medium">{row.si_total.toLocaleString("ru-RU")}</td>
-                  <td className="table-cell">{row.views_total.toLocaleString("ru-RU")}</td>
-                  <td className="table-cell">{row.avg_si}</td>
+                  <td className="table-cell metric-cell" title={formatFullNumber(row.messages_count)}>{formatCompactNumber(row.messages_count)}</td>
+                  <td className="table-cell metric-cell font-medium" title={formatFullNumber(row.si_total)}>{formatCompactNumber(row.si_total)}</td>
+                  <td className="table-cell metric-cell" title={formatFullNumber(row.views_total)}>{formatCompactNumber(row.views_total)}</td>
+                  <td className="table-cell metric-cell" title={formatFullNumber(row.avg_si)}>{formatCompactNumber(row.avg_si)}</td>
                 </tr>
               ))}
             </tbody>

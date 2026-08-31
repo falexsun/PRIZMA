@@ -1,13 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { Tone, Topic } from "@/lib/types";
 import { PageLayout } from "@/components/PageLayout";
 import { useMe } from "@/lib/useMe";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Upload } from "lucide-react";
 import Link from "next/link";
 import { LinkChipsInput } from "@/components/LinkChipsInput";
 import { TopicMultiSelect } from "@/components/TopicMultiSelect";
@@ -16,6 +16,7 @@ import { TONE_CONFIG } from "@/lib/theme";
 export default function CreateMessagePage() {
   const router = useRouter();
   const { data: user } = useMe();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [department, setDepartment] = useState("");
   const [tone, setTone] = useState<Tone>("neutral");
   const [title, setTitle] = useState("");
@@ -23,6 +24,8 @@ export default function CreateMessagePage() {
   const [topicIds, setTopicIds] = useState<number[]>([]);
   const [links, setLinks] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [uploadMessage, setUploadMessage] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   const { data: departments } = useQuery<string[]>({
@@ -60,6 +63,35 @@ export default function CreateMessagePage() {
       setError("Не удалось создать инфоповод");
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setError(null);
+    setUploadMessage(null);
+    setUploading(true);
+    const formData = new FormData();
+    formData.append("file", file);
+    try {
+      const { data } = await api.post<{ links: string[]; added: number; skipped: number }>("/messages/links/parse", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      setLinks((current) => {
+        const seen = new Set(current);
+        return [...current, ...data.links.filter((link) => {
+          if (seen.has(link)) return false;
+          seen.add(link);
+          return true;
+        })];
+      });
+      setUploadMessage(`Добавлено ссылок: ${data.added}. Пропущено: ${data.skipped}.`);
+    } catch {
+      setUploadMessage("Не удалось загрузить файл.");
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   }
 
@@ -148,9 +180,14 @@ export default function CreateMessagePage() {
         <div className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800">
           <h2 className="section-heading">Ссылки</h2>
           <LinkChipsInput links={links} onChange={setLinks} />
-          <p className="mt-2 text-xs text-slate-400">
-            Загрузка файла (xlsx/csv) доступна после создания на странице редактирования.
-          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <label className="btn secondary cursor-pointer">
+              <Upload className="h-4 w-4" />
+              {uploading ? "Загрузка..." : "Импорт xlsx/csv"}
+              <input ref={fileInputRef} type="file" accept=".xlsx,.csv" onChange={handleFileUpload} className="hidden" disabled={uploading} />
+            </label>
+            {uploadMessage && <span className="text-sm text-slate-500">{uploadMessage}</span>}
+          </div>
         </div>
 
         {error && (
