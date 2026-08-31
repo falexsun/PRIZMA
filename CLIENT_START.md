@@ -29,6 +29,7 @@ Fill the platform settings there:
 - `RU proxy` for Dzen and OK routing;
 - `VK User token` or `VK Service token`;
 - MAX login in the MAX block.
+- network access key or client link if the client uses 3x-ui, VLESS, Hysteria2, Amnezia or another VPN/proxy client.
 
 ## Delivery note
 

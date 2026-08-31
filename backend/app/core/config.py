@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     initial_admin_org_name: str = "Head office"
     initial_admin_department: str = "Administration"
     default_accounts_path: str = "default_accounts.json"
+    network_access_config: str = ""
 
     # Proxy routing: NON_RU for TikTok/Instagram/Telegram, RU for Dzen/OK
     non_ru_proxy: str = ""

@@ -38,6 +38,7 @@ const SETTINGS_KEYS = [
   "ru_proxy",
   "vk_user_token",
   "vk_service_token",
+  "network_access_config",
 ] as const;
 
 export default function AdminSettingsPage() {
@@ -50,17 +51,12 @@ export default function AdminSettingsPage() {
   const [maxPhone, setMaxPhone] = useState("");
   const [maxCode, setMaxCode] = useState("");
   const [maxPassword, setMaxPassword] = useState("");
-  const [vpnFile, setVpnFile] = useState<File | null>(null);
-  const [vpnUploadStatus, setVpnUploadStatus] = useState<string | null>(null);
+  const [networkFile, setNetworkFile] = useState<File | null>(null);
+  const [networkFileStatus, setNetworkFileStatus] = useState<string | null>(null);
 
   const { data, isLoading } = useQuery<SettingsResponse>({
     queryKey: ["admin-settings"],
     queryFn: async () => (await api.get("/admin/settings")).data,
-  });
-
-  const { data: vpnStatus } = useQuery<{ configured: boolean; config_path: string }>({
-    queryKey: ["vpn-status"],
-    queryFn: async () => (await api.get("/admin/settings/vpn")).data,
   });
 
   const { data: maxLogin } = useQuery<MaxLoginStatus>({
@@ -114,21 +110,6 @@ export default function AdminSettingsPage() {
     },
   });
 
-  const vpnUpload = useMutation({
-    mutationFn: async (file: File) => {
-      const formData = new FormData();
-      formData.append("file", file);
-      await api.post("/admin/settings/vpn/upload", formData);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["vpn-status"] });
-      setVpnFile(null);
-      setVpnUploadStatus("VPN конфигурация загружена");
-      setTimeout(() => setVpnUploadStatus(null), 3000);
-    },
-    onError: () => setVpnUploadStatus("Ошибка загрузки"),
-  });
-
   const maxLoginAction = useMutation({
     mutationFn: async ({ action, value }: { action: "start" | "code" | "password" | "cancel"; value?: string }) => {
       if (action === "start") {
@@ -164,6 +145,18 @@ export default function AdminSettingsPage() {
 
   function updateField(key: string, value: string) {
     setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  async function loadNetworkFile(file: File) {
+    if (file.size > 1024 * 1024) {
+      setNetworkFileStatus("Файл слишком большой");
+      return;
+    }
+    const text = await file.text();
+    updateField("network_access_config", text.trim());
+    setNetworkFile(file);
+    setNetworkFileStatus("Файл загружен в поле");
+    setTimeout(() => setNetworkFileStatus(null), 3000);
   }
 
   function renderSecretField(key: string, label: string, placeholder: string) {
@@ -368,33 +361,52 @@ export default function AdminSettingsPage() {
 
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/50">
               <div className="mb-2 flex items-center gap-2">
-                <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-200">VPN WireGuard</h2>
-                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${vpnStatus?.configured ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" : "bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400"}`}>
-                  {vpnStatus?.configured ? "Настроен" : "Не настроен"}
+                <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-200">Сетевой доступ</h2>
+                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${form.network_access_config ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" : "bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400"}`}>
+                  {form.network_access_config ? "Ключ добавлен" : "Не настроен"}
                 </span>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="space-y-3">
+                <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
+                  Клиентская ссылка или ключ
+                  <textarea
+                    value={form.network_access_config ?? ""}
+                    onChange={(event) => updateField("network_access_config", event.target.value)}
+                    className="input mt-1 min-h-28 font-mono text-xs"
+                    placeholder="vless://..., hysteria2://..., ss://..., trojan://..., amneziawg://..., WireGuard config или данные 3x-ui"
+                  />
+                </label>
+                <p className="text-xs text-slate-500">
+                  После подключения клиента укажите полученный HTTP/SOCKS адрес в полях прокси выше, чтобы парсеры использовали этот маршрут.
+                </p>
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
                 <input
                   type="file"
-                  accept=".conf"
-                  onChange={(event) => setVpnFile(event.target.files?.[0] ?? null)}
+                  accept=".txt,.conf,.json,.yaml,.yml"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0] ?? null;
+                    if (file) void loadNetworkFile(file);
+                  }}
                   className="text-sm"
                 />
                 <button
                   type="button"
-                  disabled={!vpnFile || vpnUpload.isPending}
-                  onClick={() => vpnFile && vpnUpload.mutate(vpnFile)}
-                  className="btn primary"
+                  disabled={!networkFile && !form.network_access_config}
+                  onClick={() => {
+                    setNetworkFile(null);
+                    updateField("network_access_config", "");
+                  }}
+                  className="btn secondary"
                 >
-                  {vpnUpload.isPending ? "Загрузка..." : "Загрузить"}
+                  Очистить
                 </button>
-                {vpnUploadStatus && (
-                  <span className={vpnUploadStatus.includes("Ошибка") ? "text-sm text-red-600" : "text-sm text-emerald-600 dark:text-emerald-400"}>
-                    {vpnUploadStatus}
+                {networkFileStatus && (
+                  <span className={networkFileStatus.includes("слишком") ? "text-sm text-red-600" : "text-sm text-emerald-600 dark:text-emerald-400"}>
+                    {networkFileStatus}
                   </span>
                 )}
               </div>
-              {vpnStatus?.configured && <p className="mt-2 text-xs text-slate-500">Конфигурация: {vpnStatus.config_path}</p>}
             </div>
 
             <div className="flex items-center gap-3 pt-2">

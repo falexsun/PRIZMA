@@ -14,6 +14,7 @@ RUNTIME_SETTING_KEYS = {
     "instagram_proxy",
     "max_headless_enabled",
     "max_session_path",
+    "network_access_config",
     "non_ru_proxy",
     "ru_proxy",
 }
