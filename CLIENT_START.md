@@ -23,13 +23,15 @@ After login as admin, open:
 http://localhost:5000/admin/settings
 ```
 
-Fill the platform settings there:
+Fill the platform settings there if needed:
 
-- `NON-RU proxy` for TikTok, Instagram and Telegram routing;
-- `RU proxy` for Dzen and OK routing;
+- `NON-RU proxy` for TikTok, Instagram and Telegram routing when direct access is unavailable;
+- `RU proxy` for Dzen and OK routing when direct access is unavailable;
 - `VK User token` or `VK Service token`;
 - MAX login in the MAX block.
 - network access key or client link if the client uses 3x-ui, VLESS, Hysteria2, Amnezia or another VPN/proxy client.
+
+Proxy and network access fields are optional. If the computer already has working access through its own network or a separately installed VPN client, leave them empty.
 
 ## Delivery note
 

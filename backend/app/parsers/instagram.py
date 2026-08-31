@@ -506,8 +506,8 @@ async def fetch(url: str) -> Metrics:
         return calcxi_result
 
     raise ParserUnavailableError(
-        "INSTAGRAM_CONFIG_MISSING: Instagram requires proxy (NON_RU_PROXY) for direct GraphQL, "
-        "or public Reel scraping via Calcxi."
+        "Instagram did not expose metrics through direct access or public fallbacks. "
+        "If the host network cannot reach Instagram reliably, configure NON_RU_PROXY or connect an external VPN/proxy client."
     )
 
 

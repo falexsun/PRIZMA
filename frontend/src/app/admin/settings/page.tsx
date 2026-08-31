@@ -219,6 +219,9 @@ export default function AdminSettingsPage() {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/50">
               <h2 className="mb-3 text-sm font-semibold text-slate-800 dark:text-slate-200">Прокси</h2>
+              <p className="mb-3 text-xs text-slate-500">
+                Необязательно: оставьте пустым, если доступ уже есть через сеть компьютера или внешний VPN.
+              </p>
               <div className="mb-3 flex items-center gap-2">
                 <button type="button" onClick={() => checkProxy()} disabled={isCheckingProxy} className="btn secondary text-xs">
                   Проверить
@@ -377,7 +380,7 @@ export default function AdminSettingsPage() {
                   />
                 </label>
                 <p className="text-xs text-slate-500">
-                  После подключения клиента укажите полученный HTTP/SOCKS адрес в полях прокси выше, чтобы парсеры использовали этот маршрут.
+                  Необязательно: если системный VPN уже даёт доступ, оставьте это поле пустым. Если внешний клиент выдаёт HTTP/SOCKS адрес, укажите его в полях прокси выше.
                 </p>
               </div>
               <div className="mt-3 flex flex-wrap items-center gap-2">
