@@ -285,6 +285,127 @@ async def vk_token_status(db: AsyncSession = Depends(get_db)) -> dict:
     return {"configured": True, "valid": True, "type": token_type, "message": "Token works"}
 
 
+@router.get("/settings/platform-status")
+async def platform_status(db: AsyncSession = Depends(get_db)) -> list[dict]:
+    values = await config_service.load_settings(db)
+    non_ru_proxy = normalize_proxy(values.get("non_ru_proxy"))
+    ru_proxy = normalize_proxy(values.get("ru_proxy"))
+    vk_token = values.get("vk_user_token") or values.get("vk_service_token")
+    max_session = await max_auth_manager.session_status()
+
+    platforms = [
+        {
+            "id": "vk",
+            "label": "VK посты",
+            "url": "https://vk.ru",
+            "proxy": None,
+            "route": "direct",
+            "requirement": "Работает напрямую; токен VK улучшает точность.",
+            "configured": True,
+        },
+        {
+            "id": "vk_video",
+            "label": "VK видео и клипы",
+            "url": "https://vkvideo.ru",
+            "proxy": None,
+            "route": "direct",
+            "requirement": "Поддерживаются vk.com/video..., vk.com/clip... и vkvideo.ru/video-OWNER_ID_ITEM_ID; для точного сбора используется VK API video.get.",
+            "configured": bool(vk_token),
+        },
+        {
+            "id": "telegram",
+            "label": "Telegram",
+            "url": "https://t.me",
+            "proxy": non_ru_proxy,
+            "route": "non_ru_proxy" if non_ru_proxy else "direct",
+            "requirement": "Публичная превью-страница работает напрямую или через NON-RU proxy.",
+            "configured": True,
+        },
+        {
+            "id": "youtube",
+            "label": "YouTube",
+            "url": "https://www.youtube.com",
+            "proxy": None,
+            "route": "direct",
+            "requirement": "Используется публичный счётчик и yt-dlp fallback.",
+            "configured": True,
+        },
+        {
+            "id": "tiktok",
+            "label": "TikTok",
+            "url": "https://www.tiktok.com",
+            "proxy": non_ru_proxy,
+            "route": "non_ru_proxy" if non_ru_proxy else "direct",
+            "requirement": "Работает напрямую, если сеть открывает TikTok; иначе нужен NON-RU proxy.",
+            "configured": True,
+        },
+        {
+            "id": "instagram",
+            "label": "Instagram",
+            "url": "https://www.instagram.com",
+            "proxy": non_ru_proxy,
+            "route": "non_ru_proxy" if non_ru_proxy else "direct",
+            "requirement": "Работает напрямую, если сеть открывает Instagram; иначе нужен NON-RU proxy.",
+            "configured": True,
+        },
+        {
+            "id": "dzen",
+            "label": "Дзен",
+            "url": "https://dzen.ru",
+            "proxy": ru_proxy,
+            "route": "ru_proxy" if ru_proxy else "direct",
+            "requirement": "Работает напрямую или через RU proxy.",
+            "configured": True,
+        },
+        {
+            "id": "max",
+            "label": "MAX",
+            "url": "https://max.ru",
+            "proxy": None,
+            "route": "direct",
+            "requirement": "Для метрик нужна активная сессия MAX.",
+            "configured": bool(max_session.get("valid")),
+        },
+        {
+            "id": "ok",
+            "label": "Одноклассники",
+            "url": "https://ok.ru",
+            "proxy": ru_proxy,
+            "route": "ru_proxy" if ru_proxy else "direct",
+            "requirement": "Работает напрямую или через RU proxy.",
+            "configured": True,
+        },
+    ]
+
+    async def check(item: dict) -> dict:
+        try:
+            timeout = httpx.Timeout(connect=4.0, read=6.0, write=4.0, pool=4.0)
+            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, proxy=item["proxy"]) as client:
+                response = await client.get(item["url"], headers={"User-Agent": "Mozilla/5.0"})
+            reachable = response.status_code < 500
+            message = f"HTTP {response.status_code}" if reachable else f"HTTP error {response.status_code}"
+        except Exception as exc:
+            reachable = False
+            message = f"Network check failed: {exc}"
+
+        if item["id"] == "vk_video" and not vk_token:
+            message = f"{message}; VK token is not configured"
+        if item["id"] == "max" and not max_session.get("valid"):
+            message = f"{message}; MAX session is not active"
+
+        return {
+            "id": item["id"],
+            "label": item["label"],
+            "configured": item["configured"],
+            "reachable": reachable,
+            "route": item["route"],
+            "requirement": item["requirement"],
+            "message": message,
+        }
+
+    return [await check(item) for item in platforms]
+
+
 @router.get("/settings/max-login", response_model=MaxLoginStatus)
 async def max_login_status() -> MaxLoginStatus:
     return MaxLoginStatus(**max_auth_manager.status())

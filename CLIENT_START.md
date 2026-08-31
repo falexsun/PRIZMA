@@ -33,6 +33,8 @@ Fill the platform settings there if needed:
 
 Proxy and network access fields are optional. If the computer already has working access through its own network or a separately installed VPN client, leave them empty.
 
+VK video links like `https://vkvideo.ru/video-226793873_456239972` are supported and checked separately from VK wall posts.
+
 ## Delivery note
 
 Do not ship a pre-filled local `.env` or `data/postgres` folder to a client unless you intentionally want to keep the existing database and credentials.

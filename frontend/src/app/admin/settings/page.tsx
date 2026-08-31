@@ -33,6 +33,16 @@ interface ConnectionStatus {
 
 type ProxyStatusResponse = Record<"non_ru_proxy" | "ru_proxy", ConnectionStatus>;
 
+interface PlatformStatus {
+  id: string;
+  label: string;
+  configured: boolean;
+  reachable: boolean;
+  route: "direct" | "non_ru_proxy" | "ru_proxy";
+  requirement: string;
+  message: string;
+}
+
 const SETTINGS_KEYS = [
   "non_ru_proxy",
   "ru_proxy",
@@ -87,6 +97,15 @@ export default function AdminSettingsPage() {
     queryFn: async () => (await api.get("/admin/settings/vk-token-status")).data,
   });
 
+  const {
+    data: platformStatus,
+    isFetching: isCheckingPlatforms,
+    refetch: checkPlatforms,
+  } = useQuery<PlatformStatus[]>({
+    queryKey: ["platform-status"],
+    queryFn: async () => (await api.get("/admin/settings/platform-status")).data,
+  });
+
   useEffect(() => {
     if (!data) return;
     const next: Record<string, string> = {};
@@ -105,6 +124,7 @@ export default function AdminSettingsPage() {
       queryClient.invalidateQueries({ queryKey: ["admin-settings"] });
       queryClient.invalidateQueries({ queryKey: ["proxy-status"] });
       queryClient.invalidateQueries({ queryKey: ["vk-token-status"] });
+      queryClient.invalidateQueries({ queryKey: ["platform-status"] });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     },
@@ -360,6 +380,34 @@ export default function AdminSettingsPage() {
               {maxLogin?.message && <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">{maxLogin.message}</p>}
               {maxLoginAction.isPending && <p className="mt-2 text-sm text-slate-500">Ожидание ответа MAX...</p>}
               {maxLoginError && <p className="mt-2 text-sm text-red-600">{maxLoginError}</p>}
+            </div>
+
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/50">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-200">Проверка соцсетей</h2>
+                <button type="button" onClick={() => checkPlatforms()} disabled={isCheckingPlatforms} className="btn secondary text-xs">
+                  {isCheckingPlatforms ? "Проверка..." : "Проверить"}
+                </button>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {(platformStatus ?? []).map((item) => {
+                  const ok = item.configured && item.reachable;
+                  const routeLabel = item.route === "direct" ? "Прямой доступ" : item.route === "non_ru_proxy" ? "NON-RU proxy" : "RU proxy";
+                  return (
+                    <div key={item.id} className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900/40">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <h3 className="text-sm font-medium text-slate-800 dark:text-slate-200">{item.label}</h3>
+                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${ok ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"}`}>
+                          {ok ? "Готово" : "Проверить"}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-500">{routeLabel}</p>
+                      <p className="mt-2 text-xs text-slate-600 dark:text-slate-400">{item.requirement}</p>
+                      <p className="mt-2 break-words text-xs text-slate-500">{item.message}</p>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
 
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/50">
