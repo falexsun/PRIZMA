@@ -1,6 +1,9 @@
+import io
 from datetime import datetime, timezone
 
+import openpyxl
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -179,6 +182,65 @@ async def get_message(
 ) -> MessageDetail:
     message = await _get_owned_message(message_id, user, db)
     return _to_detail(message)
+
+
+@router.get("/messages/{message_id}/metrics/export")
+async def export_message_metrics(
+    message_id: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+) -> StreamingResponse:
+    message = await _get_owned_message(message_id, user, db)
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Метрики"
+    sheet.append(
+        [
+            "URL",
+            "Лайки",
+            "Репосты",
+            "Комментарии",
+            "Сохранения",
+            "Просмотры",
+            "Si",
+            "Обновлено",
+            "Хэштеги",
+        ]
+    )
+
+    for link in message.links:
+        latest = max(link.metrics_history, key=lambda m: m.fetched_at, default=None)
+        is_instagram_reel = (
+            (link.platform.value if hasattr(link.platform, "value") else str(link.platform)) == "instagram"
+            and "/reel/" in link.url_normalized
+        )
+        reposts = "" if latest and is_instagram_reel and latest.reposts == 0 else (latest.reposts if latest else "")
+        sheet.append(
+            [
+                link.url_raw,
+                latest.likes if latest else "",
+                reposts,
+                latest.comments if latest else "",
+                latest.saves if latest else "",
+                latest.views if latest else "",
+                latest.si if latest else "",
+                latest.fetched_at.replace(tzinfo=None) if latest and latest.fetched_at else "",
+                link.hashtags or "",
+            ]
+        )
+
+    for column in sheet.columns:
+        max_length = max(len(str(cell.value or "")) for cell in column)
+        sheet.column_dimensions[column[0].column_letter].width = min(max(max_length + 2, 10), 60)
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    buffer.seek(0)
+
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=message_{message_id}_metrics.xlsx"},
+    )
 
 
 @router.patch("/messages/{message_id}", response_model=MessageDetail)

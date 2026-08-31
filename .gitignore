@@ -3,6 +3,10 @@
 *.pem
 *.key
 accounts.txt
+account.txt
+default_accounts.json
+backend/default_accounts.json
+.admin-login.txt
 
 # === Python ===
 __pycache__/

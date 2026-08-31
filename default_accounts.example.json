@@ -1,0 +1,20 @@
+{
+  "users": [
+    {
+      "login": "region_admin",
+      "password": "change_me_before_delivery",
+      "org_name": "Region office",
+      "department": "Administration",
+      "role": "admin",
+      "is_active": true
+    },
+    {
+      "login": "org_user",
+      "password": "change_me_before_delivery",
+      "org_name": "Region office",
+      "department": "SMM",
+      "role": "org_user",
+      "is_active": true
+    }
+  ]
+}

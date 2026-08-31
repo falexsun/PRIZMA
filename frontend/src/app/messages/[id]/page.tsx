@@ -21,6 +21,7 @@ import {
   ExternalLink,
   Pencil,
   Search,
+  Download,
 } from "lucide-react";
 import Link from "next/link";
 import { TONE_CONFIG, PLATFORM_LABELS } from "@/lib/theme";
@@ -33,6 +34,7 @@ export default function MessageCardPage() {
   const [selectedLinkIds, setSelectedLinkIds] = useState<Set<number>>(new Set());
   const [refreshing, setRefreshing] = useState(false);
   const [refreshingSelected, setRefreshingSelected] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [refreshingLinkIds, setRefreshingLinkIds] = useState<Set<number>>(new Set());
   const [search, setSearch] = useState("");
   const [platformFilter, setPlatformFilter] = useState<Platform | "">("");
@@ -106,6 +108,26 @@ export default function MessageCardPage() {
     }
   }
 
+  async function handleExportMetrics() {
+    setExporting(true);
+    try {
+      const response = await api.get(`/messages/${messageId}/metrics/export`, {
+        responseType: "blob",
+      });
+      const blob = new Blob([response.data], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `message_${messageId}_metrics.xlsx`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } finally {
+      setExporting(false);
+    }
+  }
+
   async function handleRefreshLink(linkId: number) {
     setRefreshingLinkIds((prev) => new Set(prev).add(linkId));
     try {
@@ -171,6 +193,10 @@ export default function MessageCardPage() {
   const actionLinkIds = selectedLinkIds.size > 0 ? Array.from(selectedLinkIds) : filteredLinks.map((link) => link.id);
   const actionLinksCount = actionLinkIds.length;
   const actionScopeLabel = selectedLinkIds.size > 0 ? "выбранные" : "найденные";
+  const formatReposts = (link: MessageDetail["links"][number]) =>
+    link.platform === "instagram" && link.url_normalized.includes("/reel/") && link.latest_metrics?.reposts === 0
+      ? "—"
+      : link.latest_metrics?.reposts ?? "—";
 
   return (
     <PageLayout user={user}>
@@ -187,6 +213,10 @@ export default function MessageCardPage() {
               Редактировать
             </button>
           </Link>
+          <button onClick={handleExportMetrics} disabled={exporting} className="btn secondary">
+            <Download className="h-4 w-4" />
+            {exporting ? "Экспорт..." : "Excel"}
+          </button>
           <button onClick={handleRefresh} disabled={refreshing} className="btn primary">
             <RefreshCw className={clsx("h-4 w-4", refreshing && "animate-spin")} />
             {refreshing ? "Обновление..." : "Обновить метрики"}
@@ -379,7 +409,7 @@ export default function MessageCardPage() {
                     </div>
                   </td>
                   <td className="table-cell">{link.latest_metrics?.likes ?? "—"}</td>
-                  <td className="table-cell">{link.latest_metrics?.reposts ?? "—"}</td>
+                  <td className="table-cell">{formatReposts(link)}</td>
                   <td className="table-cell">{link.latest_metrics?.comments ?? "—"}</td>
                   <td className="table-cell">{link.latest_metrics?.saves ?? "—"}</td>
                   <td className="table-cell">{link.latest_metrics?.views ?? "—"}</td>

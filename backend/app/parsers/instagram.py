@@ -92,8 +92,16 @@ def _fetch_public_sync(url: str) -> Metrics:
     # Step 3: For Reels — use Playwright to intercept network JSON + embedded JSON
     shares = 0
     saves = 0
-    if not likes and not comments and "/reel/" in clean_url:
-        likes, comments, views, shares, saves = _fetch_reel_via_playwright(clean_url, proxy_url)
+    if "/reel/" in clean_url:
+        pw_likes, pw_comments, pw_views, pw_shares, pw_saves = _fetch_reel_via_playwright(clean_url, proxy_url)
+        # Playwright is the only public fallback here that can expose
+        # shares/saves for Reels. Keep embed/og counters when present and
+        # use browser data to fill missing fields.
+        likes = likes or pw_likes
+        comments = comments or pw_comments
+        views = views or pw_views
+        shares = pw_shares
+        saves = pw_saves
 
     if not likes and not comments and not views:
         raise ParserUnavailableError("Instagram did not expose engagement metrics")
@@ -296,7 +304,7 @@ async def _fetch_via_calcxi(url: str) -> Metrics:
 
     return Metrics(
         likes=result.likes or 0,
-        reposts=result.shares or 0,
+        reposts=result.shares or result.reposts or 0,
         comments=result.comments or 0,
         saves=result.saves or 0,
         views=result.views or 0,
@@ -440,10 +448,15 @@ async def fetch(url: str) -> Metrics:
     def _complete_enough(metrics: Metrics) -> bool:
         if not is_reel:
             return bool(metrics.likes or metrics.comments)
-        # For Reels: Calcxi is the only source that returns shares/saves.
-        # If it got views + likes, that's good enough — don't lose its
-        # shares/saves just because comments or hashtags are missing.
-        return bool(metrics.views and metrics.likes)
+        # Reels sources expose different subsets. Calcxi is valuable because
+        # it may return shares/saves, but GraphQL/public scraping can still
+        # fill comments, views or caption hashtags.
+        return bool(
+            metrics.views
+            and metrics.likes
+            and metrics.comments
+            and (metrics.reposts or metrics.saves)
+        )
 
     # Strategy 1: Calcxi (free — Reels only, returns views/shares/saves)
     if is_reel:
@@ -458,38 +471,36 @@ async def fetch(url: str) -> Metrics:
         except Exception:
             pass
 
-    # Strategy 2: Direct GraphQL (free, needs proxy — posts/carousels, exact likes/comments)
-    has_proxy = bool(get_proxy_for_platform("instagram") or settings.instagram_proxy)
-    if has_proxy:
-        try:
-            result = await asyncio.wait_for(
-                asyncio.to_thread(_fetch_via_direct_graphql, url),
-                timeout=30,
-            )
-            if result.likes or result.comments:
-                merged = _merge_metrics(result, calcxi_result)
-                if is_reel:
-                    return await _ensure_reel_shares_saves(clean_url, merged)
-                return merged
-        except asyncio.TimeoutError:
-            pass
-        except Exception:
-            pass
+    # Strategy 2: Direct GraphQL (free, best with proxy, but often works
+    # without one and can fill exact likes/comments/caption for Reels).
+    try:
+        result = await asyncio.wait_for(
+            asyncio.to_thread(_fetch_via_direct_graphql, url),
+            timeout=30,
+        )
+        if result.likes or result.comments:
+            merged = _merge_metrics(result, calcxi_result)
+            if is_reel:
+                return await _ensure_reel_shares_saves(clean_url, merged)
+            return merged
+    except asyncio.TimeoutError:
+        pass
+    except Exception:
+        pass
 
     # Strategy 3: Public page scraping (fallback)
-    if has_proxy:
-        try:
-            public_result = await asyncio.wait_for(
-                asyncio.to_thread(_fetch_public_sync, url),
-                timeout=_INSTAGRAM_TIMEOUT,
-            )
-            return _merge_metrics(public_result, calcxi_result)
-        except asyncio.TimeoutError:
-            raise ParserUnavailableError(f"Instagram public fetch timed out ({_INSTAGRAM_TIMEOUT}s): {url}")
-        except ParserNotFoundError:
-            raise
-        except ParserUnavailableError:
-            pass
+    try:
+        public_result = await asyncio.wait_for(
+            asyncio.to_thread(_fetch_public_sync, url),
+            timeout=_INSTAGRAM_TIMEOUT,
+        )
+        return _merge_metrics(public_result, calcxi_result)
+    except asyncio.TimeoutError:
+        raise ParserUnavailableError(f"Instagram public fetch timed out ({_INSTAGRAM_TIMEOUT}s): {url}")
+    except ParserNotFoundError:
+        raise
+    except ParserUnavailableError:
+        pass
 
     if calcxi_result:
         return calcxi_result

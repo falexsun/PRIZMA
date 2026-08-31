@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import openpyxl
+import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
@@ -28,6 +29,7 @@ from app.schemas.admin import (
 )
 from app.services import config_service
 from app.services.max_auth_service import MaxAuthError, max_auth_manager
+from app.services.proxy import normalize_proxy
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
 
@@ -224,6 +226,63 @@ async def update_settings(payload: SettingsUpdate, db: AsyncSession = Depends(ge
     await config_service.set_settings_bulk(db, payload.settings)
     await config_service.refresh_settings(db)
     return SettingsMap(settings=await config_service.load_settings(db))
+
+
+@router.get("/settings/proxy-status")
+async def proxy_status(db: AsyncSession = Depends(get_db)) -> dict:
+    values = await config_service.load_settings(db)
+
+    async def check_proxy(key: str) -> dict:
+        raw = values.get(key)
+        proxy = normalize_proxy(raw)
+        if not proxy:
+            return {"configured": False, "valid": False, "message": "Not configured"}
+        try:
+            timeout = httpx.Timeout(connect=5.0, read=8.0, write=5.0, pool=5.0)
+            async with httpx.AsyncClient(timeout=timeout, proxy=proxy) as client:
+                response = await client.get("https://api.ipify.org?format=json")
+            response.raise_for_status()
+            ip = response.json().get("ip") or "unknown ip"
+            return {"configured": True, "valid": True, "message": f"Works, external IP: {ip}"}
+        except Exception as exc:
+            return {"configured": True, "valid": False, "message": f"Failed: {exc}"}
+
+    return {
+        "non_ru_proxy": await check_proxy("non_ru_proxy"),
+        "ru_proxy": await check_proxy("ru_proxy"),
+    }
+
+
+@router.get("/settings/vk-token-status")
+async def vk_token_status(db: AsyncSession = Depends(get_db)) -> dict:
+    values = await config_service.load_settings(db)
+    token_type = "user" if values.get("vk_user_token") else "service" if values.get("vk_service_token") else None
+    token = values.get("vk_user_token") or values.get("vk_service_token")
+    if not token:
+        return {"configured": False, "valid": False, "type": None, "message": "Not configured"}
+
+    try:
+        timeout = httpx.Timeout(connect=5.0, read=8.0, write=5.0, pool=5.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(
+                "https://api.vk.com/method/users.get",
+                params={"access_token": token, "v": "5.199"},
+            )
+        response.raise_for_status()
+        data = response.json()
+    except Exception as exc:
+        return {"configured": True, "valid": False, "type": token_type, "message": f"Request failed: {exc}"}
+
+    if "error" in data:
+        error = data["error"]
+        return {
+            "configured": True,
+            "valid": False,
+            "type": token_type,
+            "message": error.get("error_msg") or "VK token error",
+        }
+
+    return {"configured": True, "valid": True, "type": token_type, "message": "Token works"}
 
 
 @router.get("/settings/max-login", response_model=MaxLoginStatus)

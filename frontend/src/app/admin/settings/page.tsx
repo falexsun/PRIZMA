@@ -24,7 +24,21 @@ interface MaxSessionStatus {
   message: string;
 }
 
-const SETTINGS_KEYS = ["non_ru_proxy", "ru_proxy", "vk_user_token", "vk_service_token"] as const;
+interface ConnectionStatus {
+  configured: boolean;
+  valid: boolean;
+  message: string;
+  type?: string | null;
+}
+
+type ProxyStatusResponse = Record<"non_ru_proxy" | "ru_proxy", ConnectionStatus>;
+
+const SETTINGS_KEYS = [
+  "non_ru_proxy",
+  "ru_proxy",
+  "vk_user_token",
+  "vk_service_token",
+] as const;
 
 export default function AdminSettingsPage() {
   const queryClient = useQueryClient();
@@ -59,6 +73,24 @@ export default function AdminSettingsPage() {
     queryFn: async () => (await api.get("/admin/settings/max-session")).data,
   });
 
+  const {
+    data: proxyStatus,
+    isFetching: isCheckingProxy,
+    refetch: checkProxy,
+  } = useQuery<ProxyStatusResponse>({
+    queryKey: ["proxy-status"],
+    queryFn: async () => (await api.get("/admin/settings/proxy-status")).data,
+  });
+
+  const {
+    data: vkTokenStatus,
+    isFetching: isCheckingVkToken,
+    refetch: checkVkToken,
+  } = useQuery<ConnectionStatus>({
+    queryKey: ["vk-token-status"],
+    queryFn: async () => (await api.get("/admin/settings/vk-token-status")).data,
+  });
+
   useEffect(() => {
     if (!data) return;
     const next: Record<string, string> = {};
@@ -75,6 +107,8 @@ export default function AdminSettingsPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["admin-settings"] });
+      queryClient.invalidateQueries({ queryKey: ["proxy-status"] });
+      queryClient.invalidateQueries({ queryKey: ["vk-token-status"] });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     },
@@ -156,6 +190,18 @@ export default function AdminSettingsPage() {
     );
   }
 
+  function renderStatus(status?: ConnectionStatus, loading = false) {
+    const valid = Boolean(status?.valid);
+    const configured = Boolean(status?.configured);
+    const label = loading ? "Проверка..." : valid ? "Работает" : configured ? "Ошибка" : "Не настроен";
+    return (
+      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${valid ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" : configured ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400" : "bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400"}`}>
+        <span className={`h-1.5 w-1.5 rounded-full ${valid ? "bg-emerald-500" : configured ? "bg-red-500" : "bg-slate-400"}`} />
+        {label}
+      </span>
+    );
+  }
+
   function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     saveSettings.mutate({ ...form });
@@ -180,14 +226,33 @@ export default function AdminSettingsPage() {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/50">
               <h2 className="mb-3 text-sm font-semibold text-slate-800 dark:text-slate-200">Прокси</h2>
+              <div className="mb-3 flex items-center gap-2">
+                <button type="button" onClick={() => checkProxy()} disabled={isCheckingProxy} className="btn secondary text-xs">
+                  Проверить
+                </button>
+              </div>
               <div className="space-y-3">
-                {renderSecretField("non_ru_proxy", "NON-RU proxy", "socks5://user:pass@host:port")}
-                {renderSecretField("ru_proxy", "RU proxy", "socks5://user:pass@host:port")}
+                <div className="flex items-center gap-2">
+                  <div className="flex-1">{renderSecretField("non_ru_proxy", "NON-RU proxy", "socks5://user:pass@host:port")}</div>
+                  {renderStatus(proxyStatus?.non_ru_proxy, isCheckingProxy)}
+                </div>
+                {proxyStatus?.non_ru_proxy?.message && <p className="text-xs text-slate-500">NON-RU: {proxyStatus.non_ru_proxy.message}</p>}
+                <div className="flex items-center gap-2">
+                  <div className="flex-1">{renderSecretField("ru_proxy", "RU proxy", "socks5://user:pass@host:port")}</div>
+                  {renderStatus(proxyStatus?.ru_proxy, isCheckingProxy)}
+                </div>
+                {proxyStatus?.ru_proxy?.message && <p className="text-xs text-slate-500">RU: {proxyStatus.ru_proxy.message}</p>}
               </div>
             </div>
 
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/50">
               <h2 className="mb-3 text-sm font-semibold text-slate-800 dark:text-slate-200">VK</h2>
+              <div className="mb-3 flex items-center gap-2">
+                {renderStatus(vkTokenStatus, isCheckingVkToken)}
+                <button type="button" onClick={() => checkVkToken()} disabled={isCheckingVkToken} className="btn secondary text-xs">
+                  Проверить
+                </button>
+              </div>
               <div className="mb-3 flex gap-2">
                 <button type="button" onClick={() => setVkTokenType("user")} className={`btn text-xs ${vkTokenType === "user" ? "primary" : "secondary"}`}>
                   User token

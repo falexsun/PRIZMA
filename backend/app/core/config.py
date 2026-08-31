@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     instagram_proxy: str = ""
     max_headless_enabled: bool = True
     max_session_path: str = "max_session.json"
+    initial_admin_login: str = "admin"
+    initial_admin_password: str = ""
+    initial_admin_org_name: str = "Head office"
+    initial_admin_department: str = "Administration"
+    default_accounts_path: str = "default_accounts.json"
 
     # Proxy routing: NON_RU for TikTok/Instagram/Telegram, RU for Dzen/OK
     non_ru_proxy: str = ""
