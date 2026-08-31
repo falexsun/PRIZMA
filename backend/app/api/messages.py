@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 import openpyxl
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, or_
+from sqlalchemy import func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -15,7 +15,7 @@ from app.models.enums import FetchStatus, UserRole
 from app.models.fetch_job import FetchJob
 from app.parsers.base import ParserNotFoundError, ParserUnavailableError
 from app.parsers.registry import get_parser
-from app.schemas.message import MAX_LINKS, MessageCreate, MessageDetail, MessageListItem, MessageUpdate
+from app.schemas.message import MAX_LINKS, MessageCreate, MessageDetail, MessageListItem, MessageListResponse, MessageUpdate
 from app.services import config_service
 from app.services.link_file_parser import parse_links_file
 from app.services.si import calc_si
@@ -32,6 +32,16 @@ def _visible_messages_query(user: User):
     query = select(Message).options(
         selectinload(Message.topics),
         selectinload(Message.links).selectinload(Link.metrics_history),
+        selectinload(Message.snapshot),
+    )
+    if user.role != UserRole.admin:
+        query = query.where(Message.user_id == user.id)
+    return query
+
+
+def _visible_messages_list_query(user: User):
+    query = select(Message).options(
+        selectinload(Message.topics),
         selectinload(Message.snapshot),
     )
     if user.role != UserRole.admin:
@@ -107,7 +117,7 @@ def _to_list_item(message: Message) -> MessageListItem:
     )
 
 
-@router.get("/messages", response_model=list[MessageListItem])
+@router.get("/messages", response_model=MessageListResponse)
 async def list_messages(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -117,20 +127,35 @@ async def list_messages(
     tone: str | None = None,
     search: str | None = None,
     topic_id: int | None = None,
-) -> list[MessageListItem]:
-    query = _visible_messages_query(user)
+) -> MessageListResponse:
+    query = _visible_messages_list_query(user)
+    count_query = select(func.count(func.distinct(Message.id)))
+    if user.role != UserRole.admin:
+        count_query = count_query.where(Message.user_id == user.id)
+
     if department:
         query = query.where(Message.department == department)
+        count_query = count_query.where(Message.department == department)
     if tone:
         query = query.where(Message.tone == tone)
+        count_query = count_query.where(Message.tone == tone)
     if search:
         query = query.where(Message.title.ilike(f"%{search}%"))
+        count_query = count_query.where(Message.title.ilike(f"%{search}%"))
     if topic_id:
         query = query.join(Message.topics).where(Topic.id == topic_id)
+        count_query = count_query.join(Message.topics).where(Topic.id == topic_id)
+
     query = query.order_by(Message.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
 
+    total = int((await db.execute(count_query)).scalar_one() or 0)
     messages = (await db.execute(query)).scalars().unique().all()
-    return [_to_list_item(m) for m in messages]
+    return MessageListResponse(
+        items=[_to_list_item(m) for m in messages],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.post("/messages", response_model=MessageDetail, status_code=status.HTTP_201_CREATED)

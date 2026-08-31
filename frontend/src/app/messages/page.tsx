@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Search, Eye, Pencil, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
-import type { MessageListItem, Topic } from "@/lib/types";
+import type { MessageListResponse, Topic } from "@/lib/types";
 import { AppHeader } from "@/components/AppHeader";
 import { SiBadge } from "@/components/SiBadge";
 import { PageLayout } from "@/components/PageLayout";
@@ -31,7 +31,7 @@ export default function MessagesPage() {
     queryFn: async () => (await api.get("/topics")).data,
   });
 
-  const { data, isLoading } = useQuery<MessageListItem[]>({
+  const { data, isLoading } = useQuery<MessageListResponse>({
     queryKey: ["messages", page, department, tone, topicId, search],
     queryFn: async () =>
       (
@@ -53,6 +53,11 @@ export default function MessagesPage() {
     await api.delete(`/messages/${id}`);
     queryClient.invalidateQueries({ queryKey: ["messages"] });
   }
+
+  const messages = data?.items ?? [];
+  const pageSize = data?.page_size ?? 20;
+  const total = data?.total ?? 0;
+  const hasNextPage = page * pageSize < total;
 
   return (
     <PageLayout user={user}>
@@ -147,14 +152,14 @@ export default function MessagesPage() {
                   </td>
                 </tr>
               )}
-              {!isLoading && data?.length === 0 && (
+              {!isLoading && messages.length === 0 && (
                 <tr>
                   <td colSpan={10} className="px-3 py-4 text-center text-slate-400">
                     Нет данных
                   </td>
                 </tr>
               )}
-              {data?.map((m) => (
+              {messages.map((m) => (
                 <tr key={m.id} className="border-t border-slate-200 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800/50">
                   <td className="table-cell">{m.id}</td>
                   <td className="table-cell truncate" title={m.department}>{m.department}</td>
@@ -208,7 +213,7 @@ export default function MessagesPage() {
         </button>
         <span className="text-sm text-slate-600 dark:text-slate-400">Страница {page}</span>
         <button
-          disabled={(data?.length ?? 0) < 20}
+          disabled={!hasNextPage}
           onClick={() => setPage((p) => p + 1)}
           className="btn secondary disabled:opacity-40"
         >

@@ -51,6 +51,13 @@ class MessageListItem(BaseModel):
         from_attributes = True
 
 
+class MessageListResponse(BaseModel):
+    items: list[MessageListItem]
+    total: int
+    page: int
+    page_size: int
+
+
 class MessageDetail(BaseModel):
     id: int
     department: str

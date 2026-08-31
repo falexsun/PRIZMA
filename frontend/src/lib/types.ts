@@ -40,6 +40,13 @@ export interface MessageListItem {
   updated_at: string;
 }
 
+export interface MessageListResponse {
+  items: MessageListItem[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
 export interface MessageDetail extends MessageListItem {
   links: Link[];
   links_count: number;
