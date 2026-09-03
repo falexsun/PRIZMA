@@ -70,6 +70,7 @@ if errorlevel 1 (
     echo [update] API logs:
     docker compose logs --tail=120 api
     echo [update] Docker update failed. Check Docker Desktop and the logs above.
+    echo [update] If logs mention "no password supplied" or Postgres password errors, run repair-env.bat.
     echo [update] If the app opens but login fails, run reset-login.bat after fixing the error above.
     pause
     exit /b 1

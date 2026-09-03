@@ -23,9 +23,10 @@ REM 1. Create .env from example if missing
 if not exist .env (
     echo [setup] Creating .env with generated local secrets...
     powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-      "$pg=[Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(24)).TrimEnd('=').Replace('+','-').Replace('/','_');" ^
-      "$jwt=[Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(48)).TrimEnd('=').Replace('+','-').Replace('/','_');" ^
-      "$admin=[Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(12)).TrimEnd('=').Replace('+','-').Replace('/','_');" ^
+      "function New-Secret([int]$n){$bytes=New-Object byte[] $n; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes); [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+','-').Replace('/','_')};" ^
+      "$pg=New-Secret 24;" ^
+      "$jwt=New-Secret 48;" ^
+      "$admin=New-Secret 12;" ^
       "$env=(Get-Content '.env.example' -Raw);" ^
       "$env=$env -replace 'POSTGRES_PASSWORD=.*', ('POSTGRES_PASSWORD=' + $pg);" ^
       "$env=$env -replace 'DATABASE_URL=.*', ('DATABASE_URL=postgresql+asyncpg://content_tracker:' + $pg + '@postgres:5432/content_tracker');" ^
