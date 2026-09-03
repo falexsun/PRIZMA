@@ -53,15 +53,25 @@ if not exist vpn mkdir vpn
 
 REM 3. Optional client-provided accounts file.
 REM The file content must be JSON in the same format as default_accounts.example.json.
+set "ACCOUNTS_SOURCE="
 if exist account.txt (
-    echo [setup] Found account.txt, adding it to backend startup seed...
-    copy /Y account.txt backend\default_accounts.json >nul
+    set "ACCOUNTS_SOURCE=account.txt"
 ) else if exist accounts.txt (
-    echo [setup] Found accounts.txt, adding it to backend startup seed...
-    copy /Y accounts.txt backend\default_accounts.json >nul
+    set "ACCOUNTS_SOURCE=accounts.txt"
 ) else if exist default_accounts.json (
-    echo [setup] Found default_accounts.json, adding it to backend startup seed...
-    copy /Y default_accounts.json backend\default_accounts.json >nul
+    set "ACCOUNTS_SOURCE=default_accounts.json"
+)
+
+if defined ACCOUNTS_SOURCE (
+    echo [setup] Found %ACCOUNTS_SOURCE%, validating accounts JSON...
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Content '%ACCOUNTS_SOURCE%' -Raw -Encoding UTF8 | ConvertFrom-Json | Out-Null"
+    if errorlevel 1 (
+        echo [setup] %ACCOUNTS_SOURCE% is not valid JSON. Use default_accounts.example.json as the format reference.
+        pause
+        exit /b 1
+    )
+    echo [setup] Adding accounts file to backend startup seed...
+    copy /Y "%ACCOUNTS_SOURCE%" backend\default_accounts.json >nul
 )
 
 REM 4. Build and start

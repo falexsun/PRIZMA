@@ -16,10 +16,10 @@ done
 
 # --- Run migrations ---
 echo "[entrypoint] Running Alembic migrations..."
-alembic upgrade head 2>&1 || true
+alembic upgrade head
 
 echo "[entrypoint] Ensuring initial data..."
-python -m app.db.seed 2>&1 || true
+python -m app.db.seed
 
 # --- Start the app ---
 echo "[entrypoint] Starting API..."

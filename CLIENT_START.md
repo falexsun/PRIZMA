@@ -64,3 +64,13 @@ update.bat
 The update script pulls the latest Git changes, refreshes the local accounts seed copy if `account.txt` is present, rebuilds the Docker images and restarts the containers.
 
 It does not delete `.env`, `.admin-login.txt`, uploaded files or the database folder.
+
+## Login Recovery
+
+If the app says the login or password is incorrect, run from the project root:
+
+```bat
+reset-login.bat
+```
+
+The script creates or resets the local `admin` user, saves fresh credentials to `.admin-login.txt`, and restarts the app without deleting the database.

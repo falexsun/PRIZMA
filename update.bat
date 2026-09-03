@@ -40,15 +40,25 @@ if errorlevel 1 (
     exit /b 1
 )
 
+set "ACCOUNTS_SOURCE="
 if exist account.txt (
-    echo [update] Found account.txt, refreshing backend startup seed copy...
-    copy /Y account.txt backend\default_accounts.json >nul
+    set "ACCOUNTS_SOURCE=account.txt"
 ) else if exist accounts.txt (
-    echo [update] Found accounts.txt, refreshing backend startup seed copy...
-    copy /Y accounts.txt backend\default_accounts.json >nul
+    set "ACCOUNTS_SOURCE=accounts.txt"
 ) else if exist default_accounts.json (
-    echo [update] Found default_accounts.json, refreshing backend startup seed copy...
-    copy /Y default_accounts.json backend\default_accounts.json >nul
+    set "ACCOUNTS_SOURCE=default_accounts.json"
+)
+
+if defined ACCOUNTS_SOURCE (
+    echo [update] Found %ACCOUNTS_SOURCE%, validating accounts JSON...
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Content '%ACCOUNTS_SOURCE%' -Raw -Encoding UTF8 | ConvertFrom-Json | Out-Null"
+    if errorlevel 1 (
+        echo [update] %ACCOUNTS_SOURCE% is not valid JSON. Use default_accounts.example.json as the format reference.
+        pause
+        exit /b 1
+    )
+    echo [update] Refreshing backend startup seed copy...
+    copy /Y "%ACCOUNTS_SOURCE%" backend\default_accounts.json >nul
 )
 
 echo [update] Rebuilding and restarting containers...
