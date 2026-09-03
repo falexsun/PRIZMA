@@ -59,6 +59,7 @@ Thumbs.db
 *.xlsx
 
 # === Docker ===
+vpn/
 vpn/config/
 
 # === Nested duplicate ===

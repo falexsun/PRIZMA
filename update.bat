@@ -59,12 +59,18 @@ if defined ACCOUNTS_SOURCE (
     )
     echo [update] Refreshing backend startup seed copy...
     copy /Y "%ACCOUNTS_SOURCE%" backend\default_accounts.json >nul
+) else if exist backend\default_accounts.json (
+    echo [update] Removing stale backend accounts seed copy...
+    del /F /Q backend\default_accounts.json >nul
 )
 
 echo [update] Rebuilding and restarting containers...
 docker compose up --build -d
 if errorlevel 1 (
+    echo [update] API logs:
+    docker compose logs --tail=120 api
     echo [update] Docker update failed. Check Docker Desktop and the logs above.
+    echo [update] If the app opens but login fails, run reset-login.bat after fixing the error above.
     pause
     exit /b 1
 )

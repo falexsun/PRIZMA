@@ -4,6 +4,8 @@ services:
   vpn:
     image: lscr.io/linuxserver/wireguard:latest
     container_name: content-tracker-vpn
+    profiles:
+      - vpn
     restart: unless-stopped
     cap_add:
       - NET_ADMIN

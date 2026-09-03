@@ -46,7 +46,7 @@ exit /b 1
 
 :postgres_ready
 echo [reset-login] Applying migrations...
-docker compose run --rm api true >nul
+docker compose run --rm --no-deps --entrypoint "" api alembic upgrade head >nul
 if errorlevel 1 (
     echo [reset-login] Failed to prepare database. Run update.bat first, then try again.
     pause

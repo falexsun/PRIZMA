@@ -72,6 +72,9 @@ if defined ACCOUNTS_SOURCE (
     )
     echo [setup] Adding accounts file to backend startup seed...
     copy /Y "%ACCOUNTS_SOURCE%" backend\default_accounts.json >nul
+) else if exist backend\default_accounts.json (
+    echo [setup] Removing stale backend accounts seed copy...
+    del /F /Q backend\default_accounts.json >nul
 )
 
 REM 4. Build and start
