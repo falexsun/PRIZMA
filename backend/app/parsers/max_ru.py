@@ -76,8 +76,8 @@ def _decode_message_id(encoded: str) -> int:
 async def _fetch_via_pymax(url: str) -> Metrics:
     """Read public post statistics through the authenticated MAX socket API."""
     try:
-        from pymax.payloads import UserAgentPayload
         from app.services.max_client import ContentTrackerMaxClient
+        from app.services.max_user_agent import make_max_user_agent
     except ImportError as exc:
         raise ParserUnavailableError("maxapi-python is not installed") from exc
 
@@ -96,7 +96,7 @@ async def _fetch_via_pymax(url: str) -> Metrics:
     client = ContentTrackerMaxClient(
         phone=phone_path.read_text(encoding="utf-8").strip(),
         work_dir=str(work_dir),
-        headers=UserAgentPayload(device_type="DESKTOP", app_version="25.12.13"),
+        headers=make_max_user_agent(),
         reconnect=False,
     )
     try:

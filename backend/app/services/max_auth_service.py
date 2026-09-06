@@ -43,13 +43,13 @@ class MaxAuthManager:
 
         client = None
         try:
-            from pymax.payloads import UserAgentPayload
             from app.services.max_client import ContentTrackerMaxClient
+            from app.services.max_user_agent import make_max_user_agent
 
             client = ContentTrackerMaxClient(
                 phone=phone_path.read_text(encoding="utf-8").strip(),
                 work_dir=str(work_dir),
-                headers=UserAgentPayload(device_type="DESKTOP", app_version="25.12.13"),
+                headers=make_max_user_agent(),
                 reconnect=False,
             )
             await client.connect()
@@ -168,7 +168,7 @@ class MaxAuthManager:
     def _make_client(self, phone: str, device_id: UUID | None = None):
         try:
             from pymax import SocketMaxClient
-            from pymax.payloads import UserAgentPayload
+            from app.services.max_user_agent import make_max_user_agent
         except ImportError as exc:
             raise MaxAuthError(
                 "Библиотека MAX API не установлена. Пересоберите контейнеры api и worker."
@@ -177,7 +177,7 @@ class MaxAuthManager:
         return SocketMaxClient(
             phone=phone,
             work_dir=str(self._work_dir()),
-            headers=UserAgentPayload(device_type="DESKTOP", app_version="25.12.13"),
+            headers=make_max_user_agent(),
             device_id=device_id,
             reconnect=False,
         )
