@@ -100,7 +100,7 @@ async def _fetch_via_pymax(url: str) -> Metrics:
         reconnect=False,
     )
     try:
-        await client.connect()
+        await client.connect(client.user_agent)
         # A socket handshake alone leaves the session in AUTHENTICATED state.
         # Link and message methods require the post-login sync to reach ONLINE.
         await client._sync(client.user_agent)

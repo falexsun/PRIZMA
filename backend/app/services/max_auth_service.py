@@ -52,7 +52,7 @@ class MaxAuthManager:
                 headers=make_max_user_agent(),
                 reconnect=False,
             )
-            await client.connect()
+            await client.connect(client.user_agent)
             await client._sync(client.user_agent)
             return {
                 "configured": True,
@@ -75,7 +75,7 @@ class MaxAuthManager:
         client = None
         try:
             client = self._make_client(self._phone)
-            await client.connect()
+            await client.connect(client.user_agent)
             self._temp_token = await client.request_code(self._phone, language="ru")
             self._device_id = str(client._device_id)
             self._stage = "code_required"
@@ -97,7 +97,7 @@ class MaxAuthManager:
         client = None
         try:
             client = self._make_client(self._phone, UUID(self._device_id))
-            await client.connect()
+            await client.connect(client.user_agent)
             result = await client._send_code(code.strip(), self._temp_token)
             challenge = result.get("passwordChallenge") if isinstance(result, dict) else None
             if challenge and challenge.get("trackId"):
@@ -135,7 +135,7 @@ class MaxAuthManager:
             from pymax.payloads import CheckPasswordChallengePayload
 
             client = self._make_client(self._phone, UUID(self._device_id))
-            await client.connect()
+            await client.connect(client.user_agent)
             payload = CheckPasswordChallengePayload(
                 track_id=self._track_id,
                 password=password,
