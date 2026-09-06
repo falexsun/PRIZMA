@@ -17,18 +17,21 @@ _YDL_OPTS = {
 }
 
 
-def _extract_info(url: str) -> dict | None:
-    with yt_dlp.YoutubeDL(_YDL_OPTS) as ydl:
+def _extract_info(url: str, proxy: str | None = None) -> dict | None:
+    opts = {**_YDL_OPTS}
+    if proxy:
+        opts["proxy"] = proxy
+    with yt_dlp.YoutubeDL(opts) as ydl:
         return ydl.extract_info(url, download=False)
 
 
 _YTDLP_TIMEOUT = 30  # seconds — hard cap for any yt-dlp extraction
 
 
-async def fetch_via_ytdlp(url: str) -> Metrics:
+async def fetch_via_ytdlp(url: str, proxy: str | None = None) -> Metrics:
     try:
         info = await asyncio.wait_for(
-            asyncio.to_thread(_extract_info, url),
+            asyncio.to_thread(_extract_info, url, proxy),
             timeout=_YTDLP_TIMEOUT,
         )
     except asyncio.TimeoutError:

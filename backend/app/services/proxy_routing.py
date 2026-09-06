@@ -7,7 +7,7 @@ from app.services.proxy import normalize_proxy
 def get_proxy_for_platform(platform: str) -> str | None:
     """Get the appropriate proxy for a given platform.
 
-    NON_RU platforms (TikTok, Instagram, Telegram) use NON_RU_PROXY.
+    NON_RU platforms (TikTok, Instagram, Telegram, YouTube) use NON_RU_PROXY.
     RU platforms (Dzen, OK) use RU_PROXY.
     Other platforms use no proxy.
 
@@ -16,7 +16,7 @@ def get_proxy_for_platform(platform: str) -> str | None:
     platform_lower = platform.lower()
 
     # NON_RU routing
-    if platform_lower in ("tiktok", "instagram", "telegram"):
+    if platform_lower in ("tiktok", "instagram", "telegram", "youtube"):
         return normalize_proxy(settings.non_ru_proxy)
 
     # RU routing

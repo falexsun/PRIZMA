@@ -5,6 +5,7 @@ import httpx
 
 from app.parsers.base import Metrics, ParserUnavailableError
 from app.parsers.ytdlp_common import fetch_via_ytdlp
+from app.services.proxy_routing import get_proxy_for_platform
 
 
 def _video_id(url: str) -> str:
@@ -67,4 +68,7 @@ async def fetch(url: str) -> Metrics:
         # filtered at the network level.
         return await _fetch_via_public_counter(url)
     except ParserUnavailableError:
-        return await asyncio.wait_for(fetch_via_ytdlp(url), timeout=15)
+        return await asyncio.wait_for(
+            fetch_via_ytdlp(url, proxy=get_proxy_for_platform("youtube")),
+            timeout=15,
+        )

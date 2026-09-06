@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, RefreshCw } from "lucide-react";
 
 import { PageLayout } from "@/components/PageLayout";
 import { api } from "@/lib/api";
@@ -104,6 +104,15 @@ export default function AdminSettingsPage() {
   } = useQuery<PlatformStatus[]>({
     queryKey: ["platform-status"],
     queryFn: async () => (await api.get("/admin/settings/platform-status")).data,
+  });
+
+  const checkPlatform = useMutation({
+    mutationFn: async (platformId: string) => (await api.get(`/admin/settings/platform-status/${platformId}`)).data as PlatformStatus,
+    onSuccess: (result) => {
+      queryClient.setQueryData<PlatformStatus[]>(["platform-status"], (current) =>
+        current?.map((item) => (item.id === result.id ? { ...item, ...result, label: item.label, requirement: item.requirement } : item)) ?? [result],
+      );
+    },
   });
 
   useEffect(() => {
@@ -392,6 +401,7 @@ export default function AdminSettingsPage() {
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {(platformStatus ?? []).map((item) => {
                   const ok = item.configured && item.reachable;
+                  const isCheckingThisPlatform = checkPlatform.isPending && checkPlatform.variables === item.id;
                   const routeLabel = item.route === "direct" ? "Прямой доступ" : item.route === "non_ru_proxy" ? "NON-RU proxy" : "RU proxy";
                   return (
                     <div key={item.id} className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900/40">
@@ -400,6 +410,15 @@ export default function AdminSettingsPage() {
                         <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${ok ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"}`}>
                           {ok ? "Готово" : "Проверить"}
                         </span>
+                        <button
+                          type="button"
+                          onClick={() => checkPlatform.mutate(item.id)}
+                          disabled={isCheckingThisPlatform}
+                          title={`Check ${item.label}`}
+                          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
+                        >
+                          <RefreshCw className={`h-3.5 w-3.5 ${isCheckingThisPlatform ? "animate-spin" : ""}`} />
+                        </button>
                       </div>
                       <p className="text-xs text-slate-500">{routeLabel}</p>
                       <p className="mt-2 text-xs text-slate-600 dark:text-slate-400">{item.requirement}</p>
