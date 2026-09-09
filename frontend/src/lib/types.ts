@@ -36,7 +36,6 @@ export interface MessageListItem {
   topics: Topic[];
   si_total: number;
   views_total: number;
-  last_processed_at: string | null;
   created_at: string;
   updated_at: string;
 }

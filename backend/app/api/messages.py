@@ -1,6 +1,5 @@
 import io
 from datetime import datetime, timezone
-from typing import Literal
 
 import openpyxl
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
@@ -75,11 +74,8 @@ def _add_links(message: Message, raw_urls: list[str]) -> None:
 def _to_detail(message: Message) -> MessageDetail:
     snapshot = message.snapshot
     links_out = []
-    last_processed_at = None
     for link in message.links:
         latest = max(link.metrics_history, key=lambda m: m.fetched_at, default=None)
-        if latest and (last_processed_at is None or latest.fetched_at > last_processed_at):
-            last_processed_at = latest.fetched_at
         links_out.append({
             "id": link.id,
             "url_raw": link.url_raw,
@@ -100,13 +96,12 @@ def _to_detail(message: Message) -> MessageDetail:
         si_total=snapshot.si_total if snapshot else 0,
         views_total=snapshot.views_total if snapshot else 0,
         links_count=snapshot.links_count if snapshot else len(message.links),
-        last_processed_at=last_processed_at,
         created_at=message.created_at,
         updated_at=message.updated_at,
     )
 
 
-def _to_list_item(message: Message, last_processed_at: datetime | None = None) -> MessageListItem:
+def _to_list_item(message: Message) -> MessageListItem:
     snapshot = message.snapshot
     return MessageListItem(
         id=message.id,
@@ -117,28 +112,9 @@ def _to_list_item(message: Message, last_processed_at: datetime | None = None) -
         topics=message.topics,
         si_total=snapshot.si_total if snapshot else 0,
         views_total=snapshot.views_total if snapshot else 0,
-        last_processed_at=last_processed_at,
         created_at=message.created_at,
         updated_at=message.updated_at,
     )
-
-
-MessageSortBy = Literal["created_at", "updated_at", "processed_at", "si", "views", "title"]
-SortDir = Literal["asc", "desc"]
-
-
-def _message_sort_expression(sort_by: MessageSortBy):
-    if sort_by == "si":
-        return func.coalesce(MessageMetricsSnapshot.si_total, 0)
-    if sort_by == "views":
-        return func.coalesce(MessageMetricsSnapshot.views_total, 0)
-    if sort_by == "updated_at":
-        return Message.updated_at
-    if sort_by == "processed_at":
-        return func.max(LinkMetrics.fetched_at)
-    if sort_by == "title":
-        return func.lower(Message.title)
-    return Message.created_at
 
 
 @router.get("/messages", response_model=MessageListResponse)
@@ -151,8 +127,6 @@ async def list_messages(
     tone: str | None = None,
     search: str | None = None,
     topic_id: int | None = None,
-    sort_by: MessageSortBy = Query("processed_at"),
-    sort_dir: SortDir = Query("asc"),
 ) -> MessageListResponse:
     query = _visible_messages_list_query(user)
     count_query = select(func.count(func.distinct(Message.id)))
@@ -172,25 +146,12 @@ async def list_messages(
         query = query.join(Message.topics).where(Topic.id == topic_id)
         count_query = count_query.join(Message.topics).where(Topic.id == topic_id)
 
-    last_processed_at = func.max(LinkMetrics.fetched_at).label("last_processed_at")
-    query = (
-        query.add_columns(last_processed_at)
-        .outerjoin(MessageMetricsSnapshot, MessageMetricsSnapshot.message_id == Message.id)
-        .outerjoin(Link, Link.message_id == Message.id)
-        .outerjoin(LinkMetrics, LinkMetrics.link_id == Link.id)
-        .group_by(Message.id, MessageMetricsSnapshot.message_id)
-    )
-
-    sort_expr = _message_sort_expression(sort_by)
-    order_expr = sort_expr.asc() if sort_dir == "asc" else sort_expr.desc()
-    if sort_by == "processed_at":
-        order_expr = order_expr.nullsfirst() if sort_dir == "asc" else order_expr.nullslast()
-    query = query.order_by(order_expr, Message.id.desc()).offset((page - 1) * page_size).limit(page_size)
+    query = query.order_by(Message.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
 
     total = int((await db.execute(count_query)).scalar_one() or 0)
-    rows = (await db.execute(query)).unique().all()
+    messages = (await db.execute(query)).scalars().unique().all()
     return MessageListResponse(
-        items=[_to_list_item(message, last_processed_at) for message, last_processed_at in rows],
+        items=[_to_list_item(m) for m in messages],
         total=total,
         page=page,
         page_size=page_size,
