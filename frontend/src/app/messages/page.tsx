@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Search, Eye, Pencil, Trash2 } from "lucide-react";
+import { Plus, Search, Eye, Pencil, Trash2, ArrowDownUp } from "lucide-react";
 import { api } from "@/lib/api";
 import type { MessageListResponse, Topic } from "@/lib/types";
 import { AppHeader } from "@/components/AppHeader";
@@ -24,6 +24,8 @@ export default function MessagesPage() {
   const [tone, setTone] = useState("");
   const [topicId, setTopicId] = useState<number | "">("");
   const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState<"created_at" | "updated_at" | "processed_at" | "si" | "views" | "title">("processed_at");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const queryClient = useQueryClient();
   const { data: user } = useMe();
 
@@ -33,7 +35,7 @@ export default function MessagesPage() {
   });
 
   const { data, isLoading } = useQuery<MessageListResponse>({
-    queryKey: ["messages", page, department, tone, topicId, search],
+    queryKey: ["messages", page, department, tone, topicId, search, sortBy, sortDir],
     queryFn: async () =>
       (
         await api.get("/messages", {
@@ -44,6 +46,8 @@ export default function MessagesPage() {
             tone: tone || undefined,
             topic_id: topicId || undefined,
             search: search || undefined,
+            sort_by: sortBy,
+            sort_dir: sortDir,
           },
         })
       ).data,
@@ -124,6 +128,36 @@ export default function MessagesPage() {
               <option key={t.id} value={t.id}>{t.name}</option>
             ))}
           </select>
+          <div className="flex items-center gap-2">
+            <ArrowDownUp className="h-4 w-4 text-slate-400" />
+            <select
+              className="w-48"
+              value={sortBy}
+              onChange={(e) => {
+                setPage(1);
+                setSortBy(e.target.value as typeof sortBy);
+                if (e.target.value === "processed_at") setSortDir("asc");
+              }}
+            >
+              <option value="created_at">Дата создания</option>
+              <option value="processed_at">Дата обработки</option>
+              <option value="si">SI</option>
+              <option value="views">Просмотры</option>
+              <option value="updated_at">Дата изменения</option>
+              <option value="title">Название</option>
+            </select>
+            <select
+              className="w-36"
+              value={sortDir}
+              onChange={(e) => {
+                setPage(1);
+                setSortDir(e.target.value as typeof sortDir);
+              }}
+            >
+              <option value="desc">По убыванию</option>
+              <option value="asc">По возрастанию</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -140,6 +174,7 @@ export default function MessagesPage() {
                 <th className="w-24 table-header">Тональность</th>
                 <th className="min-w-[100px] truncate table-header">Темы</th>
                 <th className="w-20 table-header">Si</th>
+                <th className="w-28 table-header">Обработано</th>
                 <th className="w-24 table-header">Просмотры</th>
                 <th className="w-24 table-header">Создано</th>
                 <th className="w-20 table-header">Действия</th>
@@ -148,14 +183,14 @@ export default function MessagesPage() {
             <tbody>
               {isLoading && (
                 <tr>
-                  <td colSpan={10} className="px-3 py-4 text-center text-slate-400">
+                  <td colSpan={11} className="px-3 py-4 text-center text-slate-400">
                     Загрузка...
                   </td>
                 </tr>
               )}
               {!isLoading && messages.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-3 py-4 text-center text-slate-400">
+                  <td colSpan={11} className="px-3 py-4 text-center text-slate-400">
                     Нет данных
                   </td>
                 </tr>
@@ -180,6 +215,9 @@ export default function MessagesPage() {
                   </td>
                   <td className="table-cell">
                     <SiBadge value={m.si_total} />
+                  </td>
+                  <td className="table-cell text-slate-500">
+                    {m.last_processed_at ? new Date(m.last_processed_at).toLocaleDateString("ru-RU") : "—"}
                   </td>
                   <td className="table-cell metric-cell" title={formatFullNumber(m.views_total)}>{formatCompactNumber(m.views_total)}</td>
                   <td className="table-cell text-slate-500">{new Date(m.created_at).toLocaleDateString("ru-RU")}</td>

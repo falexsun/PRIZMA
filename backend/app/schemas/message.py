@@ -44,6 +44,7 @@ class MessageListItem(BaseModel):
     topics: list[TopicOut]
     si_total: int = 0
     views_total: int = 0
+    last_processed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -69,6 +70,7 @@ class MessageDetail(BaseModel):
     si_total: int = 0
     views_total: int = 0
     links_count: int = 0
+    last_processed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
