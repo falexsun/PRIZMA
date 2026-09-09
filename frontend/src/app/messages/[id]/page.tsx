@@ -40,6 +40,8 @@ export default function MessageCardPage() {
   const [search, setSearch] = useState("");
   const [platformFilter, setPlatformFilter] = useState<Platform | "">("");
   const [hashtagFilter, setHashtagFilter] = useState("");
+  const [linkSortBy, setLinkSortBy] = useState<"si" | "views" | "likes" | "comments" | "reposts" | "saves" | "updated" | "platform" | "url">("si");
+  const [linkSortDir, setLinkSortDir] = useState<"asc" | "desc">("desc");
   const { data: user } = useMe();
   useMessageSocket(messageId);
 
@@ -62,8 +64,27 @@ export default function MessageCardPage() {
       const q = search.toLowerCase();
       links = links.filter((l) => l.url_raw.toLowerCase().includes(q) || l.url_normalized.toLowerCase().includes(q));
     }
-    return links;
-  }, [message, search, platformFilter, hashtagFilter]);
+    return [...links].sort((a, b) => {
+      const numberValue = (link: MessageDetail["links"][number]) => {
+        const metrics = link.latest_metrics;
+        if (linkSortBy === "si") return metrics?.si ?? 0;
+        if (linkSortBy === "views") return metrics?.views ?? 0;
+        if (linkSortBy === "likes") return metrics?.likes ?? 0;
+        if (linkSortBy === "comments") return metrics?.comments ?? 0;
+        if (linkSortBy === "reposts") return metrics?.reposts ?? 0;
+        if (linkSortBy === "saves") return metrics?.saves ?? 0;
+        if (linkSortBy === "updated") return metrics?.fetched_at ? new Date(metrics.fetched_at).getTime() : 0;
+        return 0;
+      };
+      const textValue = (link: MessageDetail["links"][number]) =>
+        linkSortBy === "platform" ? link.platform : link.url_normalized;
+      const result =
+        linkSortBy === "platform" || linkSortBy === "url"
+          ? textValue(a).localeCompare(textValue(b), "ru")
+          : numberValue(a) - numberValue(b);
+      return linkSortDir === "asc" ? result : -result;
+    });
+  }, [message, search, platformFilter, hashtagFilter, linkSortBy, linkSortDir]);
 
   const uniquePlatforms = useMemo(() => {
     if (!message) return [];
@@ -318,6 +339,29 @@ export default function MessageCardPage() {
             {allHashtags.map((h) => (
               <option key={h} value={h}>#{h}</option>
             ))}
+          </select>
+          <select
+            className="w-44"
+            value={linkSortBy}
+            onChange={(e) => setLinkSortBy(e.target.value as typeof linkSortBy)}
+          >
+            <option value="si">Сортировка: SI</option>
+            <option value="views">Сортировка: просмотры</option>
+            <option value="likes">Сортировка: лайки</option>
+            <option value="comments">Сортировка: комменты</option>
+            <option value="reposts">Сортировка: репосты</option>
+            <option value="saves">Сортировка: сохранения</option>
+            <option value="updated">Сортировка: обновлено</option>
+            <option value="platform">Сортировка: платформа</option>
+            <option value="url">Сортировка: URL</option>
+          </select>
+          <select
+            className="w-36"
+            value={linkSortDir}
+            onChange={(e) => setLinkSortDir(e.target.value as typeof linkSortDir)}
+          >
+            <option value="desc">По убыванию</option>
+            <option value="asc">По возрастанию</option>
           </select>
           <div className="flex items-center gap-2">
             <button
