@@ -16,7 +16,7 @@ class Link(Base):
     url_raw: Mapped[str] = mapped_column(String(2048), nullable=False)
     url_normalized: Mapped[str] = mapped_column(String(2048), nullable=False, index=True)
     platform: Mapped[Platform] = mapped_column(
-        Enum(Platform, name="platform", values_callable=lambda enum_cls: [e.value for e in enum_cls]),
+        Enum(Platform, name="platform", values_callable=lambda enum_cls: [e.value for e in enum_cls], create_type=False),
         nullable=False,
     )
     post_external_id: Mapped[str | None] = mapped_column(String(255), nullable=True)

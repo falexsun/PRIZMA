@@ -34,4 +34,12 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.tasks.enqueue_due_fetch_jobs",
         "schedule": 60.0,
     },
+    "check-all-vk-groups": {
+        "task": "app.workers.tasks.check_all_vk_groups",
+        "schedule": 300.0,
+    },
+    "check-all-subscriptions": {
+        "task": "app.workers.tasks.check_all_subscriptions",
+        "schedule": 300.0,
+    },
 }

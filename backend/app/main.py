@@ -5,6 +5,8 @@ from app.api.admin import router as admin_router
 from app.api.auth import router as auth_router
 from app.api.messages import router as messages_router
 from app.api.meta import router as meta_router
+from app.api.subscriptions import router as subscriptions_router
+from app.api.vk_groups import router as vk_groups_router
 from app.api.ws import router as ws_router
 from app.core.config import settings
 from app.core.rate_limit import RateLimitMiddleware
@@ -33,6 +35,8 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(messages_router)
 app.include_router(meta_router)
+app.include_router(subscriptions_router)
+app.include_router(vk_groups_router)
 app.include_router(ws_router)
 app.include_router(admin_router)
 

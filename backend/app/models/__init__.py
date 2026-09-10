@@ -3,8 +3,10 @@ from app.models.fetch_job import FetchJob
 from app.models.link import Link
 from app.models.message import Message
 from app.models.metrics import LinkMetrics, MessageMetricsSnapshot
+from app.models.subscription import Subscription, SubscriptionPost
 from app.models.topic import Topic, message_topics
 from app.models.user import User
+from app.models.vk_group import VKGroup, VKGroupPost
 
 __all__ = [
     "AppSetting",
@@ -16,4 +18,8 @@ __all__ = [
     "LinkMetrics",
     "MessageMetricsSnapshot",
     "FetchJob",
+    "VKGroup",
+    "VKGroupPost",
+    "Subscription",
+    "SubscriptionPost",
 ]

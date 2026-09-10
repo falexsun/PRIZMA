@@ -9,6 +9,8 @@ import {
   Settings,
   ChevronLeft,
   ChevronRight,
+  Rss,
+  Users,
 } from "lucide-react";
 import { useTheme } from "./ThemeProvider";
 import clsx from "clsx";
@@ -21,6 +23,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { label: "Публикации", href: "/messages", icon: List },
+  { label: "Группы", href: "/groups", icon: Rss },
   { label: "Дашборды", href: "/admin", icon: LayoutDashboard },
   { label: "Рейтинг", href: "/admin/rating", icon: Award },
   { label: "Настройки", href: "/admin/settings", icon: Settings },
