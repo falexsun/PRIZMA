@@ -103,7 +103,7 @@ services:
       - ./backend/max_session.json:/app/max_session.json
       - ./vpn:/app/vpn:ro
     entrypoint: []
-    command: celery -A app.workers.celery_app worker --loglevel=info -Q fast,celery --concurrency=${WORKER_FAST_CONCURRENCY:-4}
+    command: ["bash", "/app/worker-entrypoint.sh", "fast", "fast,celery"]
     logging:
       driver: json-file
       options:
@@ -126,7 +126,7 @@ services:
       - ./backend/max_session.json:/app/max_session.json
       - ./vpn:/app/vpn:ro
     entrypoint: []
-    command: celery -A app.workers.celery_app worker --loglevel=info -Q heavy --concurrency=${WORKER_HEAVY_CONCURRENCY:-2}
+    command: ["bash", "/app/worker-entrypoint.sh", "heavy", "heavy"]
     logging:
       driver: json-file
       options:

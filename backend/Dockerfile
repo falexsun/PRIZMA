@@ -12,7 +12,8 @@ RUN pip install --no-cache-dir -r requirements.txt && \
 
 COPY . .
 
-RUN dos2unix /app/entrypoint.sh && chmod +x /app/entrypoint.sh
+RUN dos2unix /app/entrypoint.sh && chmod +x /app/entrypoint.sh && \
+    dos2unix /app/worker-entrypoint.sh && chmod +x /app/worker-entrypoint.sh
 
 EXPOSE 8000
 
