@@ -87,7 +87,7 @@ services:
         max-size: "20m"
         max-file: "5"
 
-  worker:
+  worker-fast:
     build:
       context: ./backend
     restart: unless-stopped
@@ -103,7 +103,30 @@ services:
       - ./backend/max_session.json:/app/max_session.json
       - ./vpn:/app/vpn:ro
     entrypoint: []
-    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=4
+    command: celery -A app.workers.celery_app worker --loglevel=info -Q fast,celery --concurrency=${WORKER_FAST_CONCURRENCY:-4}
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  worker-heavy:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend/uploads:/app/uploads
+      - ./backend/max_session:/app/max_session
+      - ./backend/max_session.json:/app/max_session.json
+      - ./vpn:/app/vpn:ro
+    entrypoint: []
+    command: celery -A app.workers.celery_app worker --loglevel=info -Q heavy --concurrency=${WORKER_HEAVY_CONCURRENCY:-2}
     logging:
       driver: json-file
       options:

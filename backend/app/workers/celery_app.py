@@ -2,6 +2,18 @@ from celery import Celery
 
 from app.core.config import settings
 
+# ---------------------------------------------------------------------------
+# Queue architecture:
+#   "fast"  — HTTP-based parsers (VK, Telegram, YouTube) — lightweight, fast
+#   "heavy" — Playwright-based parsers (OK, TikTok, Instagram, Dzen, MAX) — slow, memory-hungry
+#
+# Each queue is served by a separate worker container with its own concurrency.
+# This prevents a 60s OK Playwright crawl from starving VK metric fetches.
+# ---------------------------------------------------------------------------
+
+QUEUE_FAST = "fast"
+QUEUE_HEAVY = "heavy"
+
 celery_app = Celery(
     "content_tracker",
     broker=settings.redis_url,
@@ -15,18 +27,20 @@ celery_app.conf.update(
     result_serializer="json",
     timezone="UTC",
     enable_utc=True,
-    # Hard timeout: kill the task if it exceeds 90 seconds.
-    # Prevents a hung parser (Playwright, yt-dlp, browser scraping) from
-    # blocking the worker indefinitely.
     task_time_limit=90,
-    # Soft timeout: raises SoftTimeLimitExceeded at 75 seconds so the
-    # task can clean up (close browser, release resources) before the
-    # hard kill at 90s.
     task_soft_time_limit=75,
-    # Run up to 4 fetch tasks in parallel per worker process.
-    # Without this the default is 1, so a single slow MAX/Dzen Playwright
-    # fetch blocks every other platform behind it.
     worker_concurrency=4,
+    task_routes={
+        # Heavy (Playwright) parsers go to their own queue
+        "app.workers.tasks.fetch_link_metrics_heavy": {"queue": QUEUE_HEAVY},
+        "app.workers.tasks.check_subscription_posts": {"queue": QUEUE_HEAVY},
+        # Everything else stays on fast
+        "app.workers.tasks.fetch_link_metrics": {"queue": QUEUE_FAST},
+        "app.workers.tasks.enqueue_due_fetch_jobs": {"queue": QUEUE_FAST},
+        "app.workers.tasks.check_all_vk_groups": {"queue": QUEUE_FAST},
+        "app.workers.tasks.check_all_subscriptions": {"queue": QUEUE_FAST},
+        "app.workers.tasks.check_vk_group_posts": {"queue": QUEUE_FAST},
+    },
 )
 
 celery_app.conf.beat_schedule = {

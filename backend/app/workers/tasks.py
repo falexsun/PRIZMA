@@ -20,26 +20,44 @@ from app.services.si import calc_si
 from app.services.snapshot import recompute_message_snapshot
 from app.services.url_normalize import normalize_url
 from app.services.ws_publish import publish_message_update
-from app.workers.celery_app import celery_app
+from app.workers.celery_app import celery_app, QUEUE_FAST, QUEUE_HEAVY
+
+# Platforms that use Playwright (heavy/slow) vs HTTP (fast)
+_HEAVY_PLATFORMS = {"ok", "tiktok", "instagram", "dzen", "max"}
+
+
+def _queue_for_platform(platform: str) -> str:
+    return QUEUE_HEAVY if platform in _HEAVY_PLATFORMS else QUEUE_FAST
 
 
 @celery_app.task(name="app.workers.tasks.enqueue_due_fetch_jobs")
 def enqueue_due_fetch_jobs() -> int:
     now = datetime.now(timezone.utc)
     with SyncSessionLocal() as session:
-        due_jobs = session.execute(
-            select(FetchJob).where(FetchJob.status == FetchStatus.pending, FetchJob.next_run_at <= now)
-        ).scalars().all()
+        due_jobs = (
+            session.execute(
+                select(FetchJob)
+                .join(Link, Link.id == FetchJob.link_id)
+                .where(FetchJob.status == FetchStatus.pending, FetchJob.next_run_at <= now)
+            )
+            .scalars()
+            .all()
+        )
 
-        job_ids = [job.id for job in due_jobs]
+        # Get platform for each job to route to the correct queue
+        job_platforms: dict[int, str] = {}
         for job in due_jobs:
+            link = session.get(Link, job.link_id)
+            if link:
+                job_platforms[job.id] = link.platform.value
             job.status = FetchStatus.in_progress
         session.commit()
 
-    for job_id in job_ids:
-        fetch_link_metrics.delay(job_id)
+    for job_id in [j.id for j in due_jobs]:
+        queue = _queue_for_platform(job_platforms.get(job_id, "vk"))
+        fetch_link_metrics.apply_async(args=[job_id], queue=queue)
 
-    return len(job_ids)
+    return len(due_jobs)
 
 
 @celery_app.task(name="app.workers.tasks.fetch_link_metrics", bind=True, max_retries=3)
