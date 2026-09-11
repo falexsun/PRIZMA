@@ -11,7 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.core.config import settings
 from app.core.deps import get_current_user
 from app.db.session import get_db
-from app.models import Link, Message, User, Subscription, SubscriptionPost
+from app.models import Link, LinkMetrics, Message, User, Subscription, SubscriptionPost
 from app.models.enums import Platform, Tone
 from app.schemas.subscription import (
     SubscriptionCreate, SubscriptionOut, SubscriptionPostOut, SubscriptionUpdate,
@@ -33,7 +33,7 @@ def _parse_source_url(url: str) -> tuple[Platform, str, str]:
     # Handle bare @username for Telegram (e.g. "@news_heels_74")
     if url.startswith("@") and "/" not in url and "." not in url:
         username = url.lstrip("@")
-        return Platform.telegram, username, username
+        return Platform.telegram, username, f"https://t.me/{username}"
 
     if not url.startswith("http"):
         url = "https://" + url
@@ -178,12 +178,15 @@ async def create_subscription(
     db.add(message)
     await db.flush()
 
+    # Normalize source_url: @username -> https://t.me/username
+    resolved_url = screen_name if screen_name.startswith("http") else payload.source_url
+
     now = datetime.now(timezone.utc)
     sub = Subscription(
         user_id=user.id,
         message_id=message.id,
         platform=platform,
-        source_url=payload.source_url,
+        source_url=resolved_url,
         source_id=source_id,
         name=info["name"],
         screen_name=info["screen_name"] or screen_name,
@@ -227,6 +230,24 @@ async def list_subscriptions(
             1 for p in s.posts
             if (now - p.post_created_at.replace(tzinfo=timezone.utc)).total_seconds() < 86400
         )
+        # Calculate SI and views totals from latest metrics of each link
+        si_total = 0
+        views_total = 0
+        link_ids = [p.link_id for p in s.posts if p.link_id]
+        if link_ids:
+            metrics_rows = (
+                await db.execute(
+                    select(LinkMetrics)
+                    .where(LinkMetrics.link_id.in_(link_ids))
+                    .order_by(LinkMetrics.fetched_at.desc())
+                )
+            ).scalars().all()
+            seen_links: set[int] = set()
+            for m in metrics_rows:
+                if m.link_id not in seen_links:
+                    seen_links.add(m.link_id)
+                    si_total += m.si
+                    views_total += m.views
         result.append(SubscriptionOut(
             id=s.id, platform=s.platform, source_url=s.source_url,
             source_id=s.source_id, name=s.name, screen_name=s.screen_name,
@@ -235,6 +256,7 @@ async def list_subscriptions(
             check_interval_minutes=s.check_interval_minutes,
             last_checked_at=s.last_checked_at, message_id=s.message_id,
             posts_count=posts_count, active_posts_count=active_count,
+            si_total=si_total, views_total=views_total,
             created_at=s.created_at,
         ))
     return result
@@ -262,6 +284,21 @@ async def get_subscription(
         1 for p in s.posts
         if (now - p.post_created_at.replace(tzinfo=timezone.utc)).total_seconds() < 86400
     )
+    si_total = 0
+    views_total = 0
+    link_ids = [p.link_id for p in s.posts if p.link_id]
+    if link_ids:
+        metrics_rows = (
+            await db.execute(
+                select(LinkMetrics).where(LinkMetrics.link_id.in_(link_ids)).order_by(LinkMetrics.fetched_at.desc())
+            )
+        ).scalars().all()
+        seen: set[int] = set()
+        for m in metrics_rows:
+            if m.link_id not in seen:
+                seen.add(m.link_id)
+                si_total += m.si
+                views_total += m.views
     return SubscriptionOut(
         id=s.id, platform=s.platform, source_url=s.source_url,
         source_id=s.source_id, name=s.name, screen_name=s.screen_name,
@@ -270,6 +307,7 @@ async def get_subscription(
         check_interval_minutes=s.check_interval_minutes,
         last_checked_at=s.last_checked_at, message_id=s.message_id,
         posts_count=posts_count, active_posts_count=active_count,
+        si_total=si_total, views_total=views_total,
         created_at=s.created_at,
     )
 
@@ -304,6 +342,21 @@ async def update_subscription(
         1 for p in s.posts
         if (now - p.post_created_at.replace(tzinfo=timezone.utc)).total_seconds() < 86400
     )
+    si_total = 0
+    views_total = 0
+    link_ids = [p.link_id for p in s.posts if p.link_id]
+    if link_ids:
+        metrics_rows = (
+            await db.execute(
+                select(LinkMetrics).where(LinkMetrics.link_id.in_(link_ids)).order_by(LinkMetrics.fetched_at.desc())
+            )
+        ).scalars().all()
+        seen: set[int] = set()
+        for m in metrics_rows:
+            if m.link_id not in seen:
+                seen.add(m.link_id)
+                si_total += m.si
+                views_total += m.views
     return SubscriptionOut(
         id=s.id, platform=s.platform, source_url=s.source_url,
         source_id=s.source_id, name=s.name, screen_name=s.screen_name,
@@ -312,6 +365,7 @@ async def update_subscription(
         check_interval_minutes=s.check_interval_minutes,
         last_checked_at=s.last_checked_at, message_id=s.message_id,
         posts_count=posts_count, active_posts_count=active_count,
+        si_total=si_total, views_total=views_total,
         created_at=s.created_at,
     )
 
@@ -353,13 +407,34 @@ async def list_subscription_posts(
 
     now = datetime.now(timezone.utc)
     result = []
+    # Pre-fetch latest metrics for all links
+    link_ids = [p.link_id for p in posts if p.link_id]
+    latest_metrics: dict[int, LinkMetrics] = {}
+    if link_ids:
+        metrics_rows = (
+            await db.execute(
+                select(LinkMetrics)
+                .where(LinkMetrics.link_id.in_(link_ids))
+                .order_by(LinkMetrics.fetched_at.desc())
+            )
+        ).scalars().all()
+        for m in metrics_rows:
+            if m.link_id not in latest_metrics:
+                latest_metrics[m.link_id] = m
+
     for p in posts:
         age_hours = (now - p.post_created_at.replace(tzinfo=timezone.utc)).total_seconds() / 3600
         is_tracking = age_hours < 24 and p.link_id is not None
+        m = latest_metrics.get(p.link_id) if p.link_id else None
         result.append(SubscriptionPostOut(
             id=p.id, post_external_id=p.post_external_id,
             link_id=p.link_id, post_created_at=p.post_created_at,
             first_seen_at=p.first_seen_at, is_tracking=is_tracking,
+            likes=m.likes if m else 0,
+            reposts=m.reposts if m else 0,
+            comments=m.comments if m else 0,
+            views=m.views if m else 0,
+            si=m.si if m else 0,
         ))
     return result
 

@@ -28,6 +28,8 @@ class SubscriptionOut(BaseModel):
     message_id: int | None
     posts_count: int = 0
     active_posts_count: int = 0
+    si_total: int = 0
+    views_total: int = 0
     created_at: datetime
 
     class Config:
@@ -41,6 +43,11 @@ class SubscriptionPostOut(BaseModel):
     post_created_at: datetime
     first_seen_at: datetime
     is_tracking: bool
+    likes: int = 0
+    reposts: int = 0
+    comments: int = 0
+    views: int = 0
+    si: int = 0
 
     class Config:
         from_attributes = True

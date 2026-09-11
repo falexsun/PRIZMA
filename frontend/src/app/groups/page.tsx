@@ -6,7 +6,7 @@ import { PageLayout } from "@/components/PageLayout";
 import { useMe } from "@/lib/useMe";
 import {
   Plus, Trash2, RefreshCw, ExternalLink, FileText, Clock,
-  Power, PowerOff, CheckCircle, XCircle, Rss,
+  Power, PowerOff, CheckCircle, XCircle, Rss, Eye,
 } from "lucide-react";
 
 const PLATFORMS = [
@@ -43,6 +43,8 @@ interface Subscription {
   message_id: number | null;
   posts_count: number;
   active_posts_count: number;
+  si_total: number;
+  views_total: number;
   created_at: string;
 }
 
@@ -53,6 +55,11 @@ interface SubPost {
   post_created_at: string;
   first_seen_at: string;
   is_tracking: boolean;
+  likes: number;
+  reposts: number;
+  comments: number;
+  views: number;
+  si: number;
 }
 
 const INTERVAL_OPTIONS = [
@@ -280,6 +287,14 @@ export default function GroupsPage() {
 
                 <div className="mt-3 flex flex-wrap gap-3 text-xs text-slate-500">
                   <span className="flex items-center gap-1"><FileText className="h-3 w-3" />{sub.posts_count} постов</span>
+                  {sub.si_total > 0 && (
+                    <span className="rounded-full bg-blue-100 px-2 py-0.5 font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
+                      Si {sub.si_total.toLocaleString()}
+                    </span>
+                  )}
+                  {sub.views_total > 0 && (
+                    <span className="flex items-center gap-1"><Eye className="h-3 w-3" />{sub.views_total.toLocaleString()}</span>
+                  )}
                   <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{fmtInterval(sub.check_interval_minutes)}</span>
                   {sub.active_posts_count > 0 && (
                     <span className="rounded-full bg-green-100 px-2 py-0.5 text-green-700 dark:bg-green-900/30 dark:text-green-400">
@@ -330,14 +345,21 @@ export default function GroupsPage() {
                 {subPosts.map((post) => (
                   <div key={post.id} className="rounded-lg border p-3 text-sm dark:border-slate-700">
                     <div className="flex items-center justify-between">
-                      <a href={`https://vk.com/wall${post.post_external_id}`} target="_blank" rel="noopener noreferrer"
-                        className="text-xs text-blue-500 hover:underline truncate">{post.post_external_id}</a>
+                      <span className="text-xs text-slate-500 truncate">{post.post_external_id}</span>
                       {post.is_tracking ? (
                         <span className="flex items-center gap-1 text-xs text-green-600"><CheckCircle className="h-3 w-3" /> Трекинг</span>
                       ) : (
                         <span className="flex items-center gap-1 text-xs text-slate-400"><XCircle className="h-3 w-3" /> Завершён</span>
                       )}
                     </div>
+                    {(post.likes > 0 || post.reposts > 0 || post.views > 0 || post.si > 0) && (
+                      <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                        {post.si > 0 && <span className="rounded bg-blue-100 px-1.5 py-0.5 font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">Si {post.si}</span>}
+                        {post.likes > 0 && <span className="text-slate-500">👍 {post.likes}</span>}
+                        {post.reposts > 0 && <span className="text-slate-500">🔄 {post.reposts}</span>}
+                        {post.views > 0 && <span className="text-slate-500">👁 {post.views}</span>}
+                      </div>
+                    )}
                     <p className="mt-1 text-xs text-slate-400">{post.post_created_at ? fmtAge(post.post_created_at) : "—"}</p>
                   </div>
                 ))}
