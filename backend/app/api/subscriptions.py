@@ -29,6 +29,12 @@ def _parse_source_url(url: str) -> tuple[Platform, str, str]:
     screen_name is a human-readable name for display.
     """
     url = url.strip()
+
+    # Handle bare @username for Telegram (e.g. "@news_heels_74")
+    if url.startswith("@") and "/" not in url and "." not in url:
+        username = url.lstrip("@")
+        return Platform.telegram, username, username
+
     if not url.startswith("http"):
         url = "https://" + url
 
@@ -371,5 +377,6 @@ async def check_subscription_now(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Subscription not found")
 
     from app.workers.tasks import check_subscription_posts
-    check_subscription_posts.delay(s.id)
+    from app.workers.celery_app import QUEUE_HEAVY
+    check_subscription_posts.apply_async(args=[s.id], queue=QUEUE_HEAVY)
     return {"status": "queued"}

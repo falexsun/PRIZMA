@@ -497,7 +497,7 @@ def check_all_subscriptions() -> int:
                     last = last.replace(tzinfo=timezone.utc)
                 if (now - last).total_seconds() / 60 < sub.check_interval_minutes:
                     continue
-            check_subscription_posts.delay(sub.id)
+            check_subscription_posts.apply_async(args=[sub.id], queue=QUEUE_HEAVY)
             enqueued += 1
     return enqueued
 
