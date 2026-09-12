@@ -1,5 +1,5 @@
 import io
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import openpyxl
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
@@ -224,8 +224,11 @@ async def create_message(
     await db.flush()
 
     db.add(MessageMetricsSnapshot(message_id=message.id, links_count=len(created_links)))
-    for link in created_links:
-        db.add(FetchJob(link_id=link.id))
+    now = datetime.now(timezone.utc)
+    for i, link in enumerate(created_links):
+        # Stagger jobs: 0s, 5s, 10s, ... to avoid overwhelming the worker queue
+        stagger = timedelta(seconds=min(i * 5, 300))
+        db.add(FetchJob(link_id=link.id, next_run_at=now + stagger))
 
     await db.commit()
     message = await _get_owned_message(message.id, user, db)
@@ -351,32 +354,40 @@ async def delete_message(
 async def refresh_metrics(
     message_id: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
 ) -> dict[str, int]:
-    message = await _get_owned_message(message_id, user, db)
-    queued = 0
+    # Lightweight check: just verify the message exists and is accessible
+    msg_query = select(Message).where(Message.id == message_id)
+    if user.role.value != "admin":
+        msg_query = msg_query.where(Message.user_id == user.id)
+    message = (await db.execute(msg_query)).scalar_one_or_none()
+    if message is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Message not found")
+
     now = datetime.now(timezone.utc)
-    link_ids = [link.id for link in message.links]
+    queued = 0
+
+    # Get link IDs for this message
+    link_ids = [row[0] for row in (await db.execute(
+        select(Link.id).where(Link.message_id == message_id)
+    )).all()]
+
+    if not link_ids:
+        return {"queued": 0}
+
+    # Find existing active jobs for these links
     existing_jobs = (
-        (
-            await db.execute(
-                select(FetchJob).where(
-                    FetchJob.link_id.in_(link_ids),
-                    FetchJob.status.in_(
-                        [FetchStatus.pending, FetchStatus.in_progress, FetchStatus.unavailable]
-                    ),
-                )
+        await db.execute(
+            select(FetchJob).where(
+                FetchJob.link_id.in_(link_ids),
+                FetchJob.status.in_([FetchStatus.pending, FetchStatus.in_progress, FetchStatus.unavailable]),
             )
         )
-        .scalars()
-        .all()
-        if link_ids
-        else []
-    )
+    ).scalars().all()
     jobs_by_link_id = {job.link_id: job for job in existing_jobs}
 
-    for link in message.links:
-        job = jobs_by_link_id.get(link.id)
+    for lid in link_ids:
+        job = jobs_by_link_id.get(lid)
         if job is None:
-            db.add(FetchJob(link_id=link.id, next_run_at=now))
+            db.add(FetchJob(link_id=lid, next_run_at=now))
         else:
             job.status = FetchStatus.pending
             job.last_error = None

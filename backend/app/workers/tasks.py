@@ -6,6 +6,7 @@ import httpx
 import redis
 from celery.exceptions import SoftTimeLimitExceeded
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.db.sync_session import SyncSessionLocal
@@ -33,27 +34,32 @@ def _queue_for_platform(platform: str) -> str:
 @celery_app.task(name="app.workers.tasks.enqueue_due_fetch_jobs")
 def enqueue_due_fetch_jobs() -> int:
     now = datetime.now(timezone.utc)
+    MAX_BATCH = 200  # Don't flood the queue — process in batches
+
     with SyncSessionLocal() as session:
         due_jobs = (
             session.execute(
                 select(FetchJob)
                 .join(Link, Link.id == FetchJob.link_id)
                 .where(FetchJob.status == FetchStatus.pending, FetchJob.next_run_at <= now)
+                .limit(MAX_BATCH)
             )
             .scalars()
             .all()
         )
 
-        # Get platform for each job to route to the correct queue
+        # Collect IDs and platforms before commit (objects detach after commit)
+        job_ids: list[int] = []
         job_platforms: dict[int, str] = {}
         for job in due_jobs:
             link = session.get(Link, job.link_id)
             if link:
                 job_platforms[job.id] = link.platform.value
+            job_ids.append(job.id)
             job.status = FetchStatus.in_progress
         session.commit()
 
-    for job_id in [j.id for j in due_jobs]:
+    for job_id in job_ids:
         queue = _queue_for_platform(job_platforms.get(job_id, "vk"))
         fetch_link_metrics.apply_async(args=[job_id], queue=queue)
 
@@ -67,11 +73,13 @@ def fetch_link_metrics(self, fetch_job_id: int) -> None:
     with SyncSessionLocal() as session:
         config_service.refresh_settings_sync(session)
 
-        job = session.get(FetchJob, fetch_job_id)
+        job = session.execute(
+            select(FetchJob).options(selectinload(FetchJob.link)).where(FetchJob.id == fetch_job_id)
+        ).scalar_one_or_none()
         if job is None:
             return
 
-        link = session.get(Link, job.link_id)
+        link = job.link
         if link is None:
             job.status = FetchStatus.failed
             job.last_error = f"Link {job.link_id} not found (deleted)"
