@@ -41,7 +41,10 @@ def enqueue_due_fetch_jobs() -> int:
             session.execute(
                 select(FetchJob)
                 .join(Link, Link.id == FetchJob.link_id)
-                .where(FetchJob.status == FetchStatus.pending, FetchJob.next_run_at <= now)
+                .where(
+                    FetchJob.status.in_([FetchStatus.pending, FetchStatus.unavailable]),
+                    FetchJob.next_run_at <= now,
+                )
                 .limit(MAX_BATCH)
             )
             .scalars()
