@@ -53,7 +53,18 @@ def _vk_wall_get(owner_id: int, count: int = 20, offset: int = 0) -> list[dict]:
     resp.raise_for_status()
     data = resp.json()
     if "error" in data:
-        raise RuntimeError(f"VK API error: {data['error'].get('error_msg', '')}")
+        error_msg = data["error"].get("error_msg", "")
+        error_code = data["error"].get("error_code", 0)
+        # Rate limit: wait and retry once
+        if error_code == 6:
+            time.sleep(2)
+            resp = httpx.get(f"{VK_API_BASE}/wall.get", params=params, timeout=timeout)
+            resp.raise_for_status()
+            data = resp.json()
+            if "error" not in data:
+                rd = data.get("response", {})
+                return rd.get("items", []) if isinstance(rd, dict) else rd
+        raise RuntimeError(f"VK API error (code={error_code}): {error_msg}")
     rd = data.get("response", {})
     return rd.get("items", []) if isinstance(rd, dict) else rd
 
@@ -82,11 +93,15 @@ def _resolve_vk_owner_id(source_id: str) -> int:
 def discover_vk(source_id: str, backfill: bool = False) -> list[DiscoveredPost]:
     """Fetch wall posts from VK group (negative id) or user (positive id)."""
     owner_id = _resolve_vk_owner_id(source_id)
+    # VK API requires negative owner_id for groups, positive for users.
+    # _resolve_vk_owner_id always returns positive (group ID).
+    # Negate it for wall.get.
+    wall_owner_id = -owner_id
     all_items: list[dict] = []
     if backfill:
         offset = 0
         for _ in range(100):
-            items = _vk_wall_get(owner_id, count=100, offset=offset)
+            items = _vk_wall_get(wall_owner_id, count=100, offset=offset)
             if not items:
                 break
             all_items.extend(items)
@@ -94,7 +109,7 @@ def discover_vk(source_id: str, backfill: bool = False) -> list[DiscoveredPost]:
                 break
             offset += 100
     else:
-        all_items = _vk_wall_get(owner_id, count=20)
+        all_items = _vk_wall_get(wall_owner_id, count=20)
 
     posts: list[DiscoveredPost] = []
     for item in all_items:
