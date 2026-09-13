@@ -268,6 +268,47 @@ export default function MessageCardPage() {
         </div>
       </div>
 
+      {/* Progress */}
+      <div className="mb-4 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
+        <div className="flex flex-wrap items-center gap-4 text-sm">
+          <div>
+            <span className="text-slate-500">Ссылок:</span>{" "}
+            <span className="font-medium">{message.links_count}</span>
+          </div>
+          <div>
+            <span className="text-slate-500">С метриками:</span>{" "}
+            <span className="font-medium text-emerald-600 dark:text-emerald-400">{message.links_with_metrics}</span>
+          </div>
+          {message.links_pending > 0 && (
+            <div>
+              <span className="text-slate-500">В очереди:</span>{" "}
+              <span className="font-medium text-amber-600 dark:text-amber-400">{message.links_pending}</span>
+            </div>
+          )}
+          {message.links_count > 0 && (
+            <div className="flex items-center gap-2">
+              <div className="h-2 w-32 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+                <div
+                  className="h-full rounded-full bg-emerald-500 transition-all"
+                  style={{ width: `${Math.round((message.links_with_metrics / message.links_count) * 100)}%` }}
+                />
+              </div>
+              <span className="text-xs text-slate-500">
+                {Math.round((message.links_with_metrics / message.links_count) * 100)}%
+              </span>
+            </div>
+          )}
+          {message.first_metric_at && (
+            <div className="ml-auto text-xs text-slate-400">
+              Первая: {new Date(message.first_metric_at).toLocaleString("ru-RU")}
+              {message.last_metric_at && message.last_metric_at !== message.first_metric_at && (
+                <> · Последняя: {new Date(message.last_metric_at).toLocaleString("ru-RU")}</>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* Stats */}
       <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <div className="stat-card">

@@ -50,6 +50,10 @@ export interface MessageListResponse {
 export interface MessageDetail extends MessageListItem {
   links: Link[];
   links_count: number;
+  links_with_metrics: number;
+  links_pending: number;
+  first_metric_at: string | null;
+  last_metric_at: string | null;
 }
 
 export interface Me {

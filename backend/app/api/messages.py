@@ -111,8 +111,25 @@ def _add_links(message: Message, raw_urls: list[str], existing_urls: set[str] | 
     return new_links
 
 
-def _to_detail(message: Message, links_out: list[dict] | None = None) -> MessageDetail:
+async def _to_detail(message: Message, links_out: list[dict] | None = None, db: AsyncSession | None = None) -> MessageDetail:
     snapshot = message.snapshot
+    links_with_metrics = 0
+    links_pending = 0
+    first_metric_at = None
+    last_metric_at = None
+
+    if links_out:
+        links_with_metrics = sum(1 for item in links_out if item["latest_metrics"] is not None)
+        links_pending = len(links_out) - links_with_metrics
+        metric_dates = [
+            item["latest_metrics"].fetched_at
+            for item in links_out
+            if item["latest_metrics"] is not None and item["latest_metrics"].fetched_at
+        ]
+        if metric_dates:
+            first_metric_at = min(metric_dates)
+            last_metric_at = max(metric_dates)
+
     return MessageDetail(
         id=message.id,
         department=message.department,
@@ -124,6 +141,10 @@ def _to_detail(message: Message, links_out: list[dict] | None = None) -> Message
         si_total=snapshot.si_total if snapshot else 0,
         views_total=snapshot.views_total if snapshot else 0,
         links_count=snapshot.links_count if snapshot else len(links_out or []),
+        links_with_metrics=links_with_metrics,
+        links_pending=links_pending,
+        first_metric_at=first_metric_at,
+        last_metric_at=last_metric_at,
         created_at=message.created_at,
         updated_at=message.updated_at,
     )
@@ -258,7 +279,7 @@ async def create_message(
     await db.commit()
     message = await _get_owned_message(message.id, user, db)
     links_out = await _load_links_with_metrics(message.id, db)
-    return _to_detail(message, links_out)
+    return await _to_detail(message, links_out)
 
 
 @router.get("/messages/{message_id}", response_model=MessageDetail)
@@ -267,7 +288,7 @@ async def get_message(
 ) -> MessageDetail:
     message = await _get_owned_message(message_id, user, db)
     links_out = await _load_links_with_metrics(message_id, db)
-    return _to_detail(message, links_out)
+    return await _to_detail(message, links_out)
 
 
 @router.get("/messages/{message_id}/metrics/export")
@@ -383,7 +404,7 @@ async def update_message(
     await db.commit()
     message = await _get_owned_message(message_id, user, db)
     links_out = await _load_links_with_metrics(message_id, db)
-    return _to_detail(message, links_out)
+    return await _to_detail(message, links_out)
 
 
 @router.delete("/messages/{message_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -533,10 +554,10 @@ async def upload_links_file(
         .all()
     )
     existing_count = len(existing_urls)
-    if existing_count + len(urls) > MAX_LINKS:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Too many links: max {MAX_LINKS}")
 
     new_links = _add_links(message, urls, existing_urls)
+    if existing_count + len(new_links) > MAX_LINKS:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Too many links: max {MAX_LINKS}")
     for link in new_links:
         db.add(link)
     await db.flush()
@@ -553,4 +574,4 @@ async def upload_links_file(
     await db.commit()
     message = await _get_owned_message(message_id, user, db)
     links_out = await _load_links_with_metrics(message_id, db)
-    return _to_detail(message, links_out)
+    return await _to_detail(message, links_out)
