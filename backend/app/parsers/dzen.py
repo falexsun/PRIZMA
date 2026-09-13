@@ -65,7 +65,7 @@ def _fetch_via_playwright_sync(url: str, proxy: str | None = None) -> Metrics:
         )
         page = context.new_page()
         try:
-            response = page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+            response = page.goto(url, wait_until="domcontentloaded", timeout=60_000)
             if response is not None and response.status == 404:
                 raise ParserNotFoundError(f"DZEN_CONTENT_NOT_FOUND: Dzen post not found: {url}")
 
