@@ -135,9 +135,11 @@ def fetch_link_metrics(self, fetch_job_id: int) -> None:
                 job.last_error = f"Gave up after {job.attempts} attempts: {exc}"
                 session.commit()
                 return
+            # Exponential backoff: 5, 10, 15, 20, 25, 30 min (capped at 30)
+            backoff = min(UNAVAILABLE_RETRY_MINUTES, 5 * job.attempts)
             job.status = FetchStatus.unavailable
             job.last_error = str(exc)
-            job.next_run_at = now + timedelta(minutes=UNAVAILABLE_RETRY_MINUTES)
+            job.next_run_at = now + timedelta(minutes=backoff)
             session.commit()
             return
         except SoftTimeLimitExceeded:
@@ -146,9 +148,10 @@ def fetch_link_metrics(self, fetch_job_id: int) -> None:
                 job.last_error = f"Gave up after {job.attempts} attempts: task timed out"
                 session.commit()
                 return
+            backoff = min(UNAVAILABLE_RETRY_MINUTES, 5 * job.attempts)
             job.status = FetchStatus.unavailable
             job.last_error = "Task timed out (soft limit exceeded)"
-            job.next_run_at = now + timedelta(minutes=UNAVAILABLE_RETRY_MINUTES)
+            job.next_run_at = now + timedelta(minutes=backoff)
             session.commit()
             return
         except Exception as exc:  # network errors, timeouts, etc.

@@ -87,22 +87,30 @@ async def fetch(url: str) -> Metrics:
         "v": VK_API_VERSION,
     }
 
-    await asyncio.to_thread(_vk_rate_limit_sync)
-
-    # Explicit timeout breakdown: connect in 3s, read in 7s. Prevents a hung
-    # connection from occupying a worker and burning through rate-limit tokens.
     timeout = httpx.Timeout(connect=3.0, read=7.0, write=5.0, pool=5.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.get(f"{VK_API_BASE}/{method}", params=params)
-        response.raise_for_status()
-        data = response.json()
+    data = None
 
-    if "error" in data:
+    # Retry up to 3 times on rate limit (error code 6) with backoff
+    for attempt in range(4):
+        await asyncio.to_thread(_vk_rate_limit_sync)
+
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(f"{VK_API_BASE}/{method}", params=params)
+            response.raise_for_status()
+            data = response.json()
+
+        if "error" not in data:
+            break
+
         error_msg = data["error"].get("error_msg", "")
         error_code = data["error"].get("error_code", 0)
-        # Rate limit errors should be retried later
+
         if error_code == 6 or "rate" in error_msg.lower() or "too many" in error_msg.lower():
-            raise ParserUnavailableError(f"VK API error: {error_msg}")
+            if attempt < 3:
+                await asyncio.sleep(2 * (attempt + 1))  # 2s, 4s, 6s backoff
+                continue
+            raise ParserUnavailableError(f"VK API rate limit: {error_msg}")
+
         raise ParserUnavailableError(f"VK API error: {error_msg}")
 
     response_data = data.get("response", [])
