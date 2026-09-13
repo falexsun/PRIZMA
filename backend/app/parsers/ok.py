@@ -172,18 +172,53 @@ def _parse_ok_reaction_text(text: str) -> tuple[int, int]:
     return likes, shares
 
 
-def _extract_group_feed_url(url: str) -> str | None:
-    """Extract the group feed URL from a topic URL."""
+_MAX_UNAVAILABLE_ATTEMPTS = 10  # Give up after this many retries
+
+
+def _extract_owner_feed_url(url: str) -> str | None:
+    """Extract the owner feed URL from any OK content URL.
+
+    Supports: /group/ID/topic/..., /group/ID/album/...,
+              /profile/ID/statuses/..., /profile/ID/album/..., /profile/ID/pphotos/...
+    """
     parsed = urlparse(url)
     path = parsed.path.strip("/")
-    # /group/60690308923443/topic/... -> /group/60690308923443
+    # /group/123456/anything -> /group/123456
     m = re.match(r"(group/\d+)", path)
+    if m:
+        return f"https://ok.ru/{m.group(1)}"
+    # /profile/123456/anything -> /profile/123456
+    m = re.match(r"(profile/\d+)", path)
     if m:
         return f"https://ok.ru/{m.group(1)}"
     # /screenname/topic/... -> /screenname
     parts = path.split("/")
-    if len(parts) >= 2 and parts[1] == "topic":
+    if len(parts) >= 2 and parts[1] in ("topic", "statuses", "album", "pphotos"):
         return f"https://ok.ru/{parts[0]}"
+    return None
+
+
+def _extract_content_id(url: str) -> str | None:
+    """Extract a content ID from any OK content URL.
+
+    Returns the most specific ID: topic ID, status ID, or photo ID.
+    """
+    # /topic/123456
+    m = re.search(r"/topic/(\d+)", url)
+    if m:
+        return m.group(1)
+    # /statuses/123456
+    m = re.search(r"/statuses/(\d+)", url)
+    if m:
+        return m.group(1)
+    # /album/ALBUM_ID/PHOTO_ID — return the last numeric segment (photo ID)
+    m = re.search(r"/album/\d+/(\d+)", url)
+    if m:
+        return m.group(1)
+    # /pphotos/123456
+    m = re.search(r"/pphotos/(\d+)", url)
+    if m:
+        return m.group(1)
     return None
 
 
@@ -277,51 +312,67 @@ def _fetch_topic_via_feed_pagination_sync(feed_url: str, topic_id: str, max_clic
 
 
 async def _fetch_topic_post(url: str) -> Metrics:
-    """Fetch OK topic metrics: fast HTTP feed first, then Playwright pagination for old posts."""
+    """Fetch OK topic/post metrics: fast HTTP feed first, then Playwright for old posts.
+
+    Supports: /group/ID/topic/..., /group/ID/album/...,
+              /profile/ID/statuses/..., /profile/ID/album/..., /profile/ID/pphotos/...
+    """
     proxy = get_proxy_for_platform("ok")
-    topic_id = _extract_topic_id(url)
-    feed_url = _extract_group_feed_url(url)
+    content_id = _extract_content_id(url)
+    feed_url = _extract_owner_feed_url(url)
 
-    if not feed_url or not topic_id:
-        raise ParserUnavailableError(f"Cannot extract group/topic from URL: {url}")
+    if not feed_url or not content_id:
+        raise ParserNotFoundError(f"Unsupported OK URL format: {url}")
 
-    # Fast path: scrape first page of group feed via HTTP
-    try:
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True, proxy=proxy) as client:
-            response = await client.get(feed_url, headers={"User-Agent": "Mozilla/5.0"})
-        if response.status_code == 200:
-            feed_metrics = _parse_ok_group_feed(response.text)
-            if topic_id in feed_metrics:
-                likes, shares = feed_metrics[topic_id]
+    is_topic = bool(_extract_topic_id(url))
+
+    # Fast path: scrape first page of owner feed via HTTP (only works for topics)
+    if is_topic:
+        try:
+            async with httpx.AsyncClient(timeout=15, follow_redirects=True, proxy=proxy) as client:
+                response = await client.get(feed_url, headers={"User-Agent": "Mozilla/5.0"})
+            if response.status_code == 200:
+                feed_metrics = _parse_ok_group_feed(response.text)
+                if content_id in feed_metrics:
+                    likes, shares = feed_metrics[content_id]
+                    return Metrics(likes=likes, reposts=shares, comments=0, saves=0, views=0)
+        except Exception:
+            pass
+
+    # Slow path: paginate the feed with Playwright (topics only)
+    if is_topic:
+        try:
+            likes, shares = await asyncio.wait_for(
+                asyncio.to_thread(_fetch_topic_via_feed_pagination_sync, feed_url, content_id),
+                timeout=120,
+            )
+            if likes > 0 or shares > 0:
                 return Metrics(likes=likes, reposts=shares, comments=0, saves=0, views=0)
-    except Exception:
-        pass
+        except asyncio.TimeoutError:
+            pass
+        except Exception:
+            pass
 
-    # Slow path: paginate the feed with Playwright to find old posts
+    # Fallback: parse the content page directly via Playwright (statuses, albums, photos)
     try:
-        likes, shares = await asyncio.wait_for(
-            asyncio.to_thread(_fetch_topic_via_feed_pagination_sync, feed_url, topic_id),
-            timeout=120,
-        )
-        if likes > 0 or shares > 0:
-            return Metrics(likes=likes, reposts=shares, comments=0, saves=0, views=0)
-    except asyncio.TimeoutError:
-        pass
-    except Exception:
+        return await _fetch_via_browser(url)
+    except ParserNotFoundError:
+        raise
+    except (ParserUnavailableError, Exception):
         pass
 
-    # Fallback: JSON-LD on the topic page itself (only commentCount available)
+    # Last resort: JSON-LD on the page itself (only commentCount available)
     try:
         async with httpx.AsyncClient(timeout=10, follow_redirects=True, proxy=proxy) as client:
             resp = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
         if resp.status_code == 404:
-            raise ParserNotFoundError(f"OK topic not found: {url}")
+            raise ParserNotFoundError(f"OK content not found: {url}")
         counts = extract_interaction_counts(resp.text)
         return Metrics(likes=0, reposts=0, comments=counts.get("comments", 0), saves=0, views=0)
     except ParserNotFoundError:
         raise
     except Exception as exc:
-        raise ParserUnavailableError(f"OK topic fetch failed: {url}: {exc}") from exc
+        raise ParserUnavailableError(f"OK content fetch failed: {url}: {exc}") from exc
 
 
 def _ok_page_playwright_sync(url: str) -> Metrics:

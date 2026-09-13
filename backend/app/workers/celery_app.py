@@ -27,8 +27,8 @@ celery_app.conf.update(
     result_serializer="json",
     timezone="UTC",
     enable_utc=True,
-    task_time_limit=90,
-    task_soft_time_limit=75,
+    task_time_limit=120,
+    task_soft_time_limit=100,
     worker_concurrency=4,
     task_routes={
         # Heavy (Playwright) parsers go to their own queue

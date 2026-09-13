@@ -26,6 +26,9 @@ from app.workers.celery_app import celery_app, QUEUE_FAST, QUEUE_HEAVY
 # Platforms that use Playwright (heavy/slow) vs HTTP (fast)
 _HEAVY_PLATFORMS = {"ok", "tiktok", "instagram", "dzen", "max"}
 
+# Max retries for unavailable/timeout before giving up (prevents zombie tasks)
+_MAX_UNAVAILABLE_ATTEMPTS = 10
+
 
 def _queue_for_platform(platform: str) -> str:
     return QUEUE_HEAVY if platform in _HEAVY_PLATFORMS else QUEUE_FAST
@@ -37,6 +40,26 @@ def enqueue_due_fetch_jobs() -> int:
     MAX_BATCH = 200  # Don't flood the queue — process in batches
 
     with SyncSessionLocal() as session:
+        # Clean up zombie in_progress jobs stuck for > 5 minutes (hard timeout kills)
+        zombie_cutoff = now - timedelta(minutes=5)
+        zombies = session.execute(
+            select(FetchJob)
+            .where(FetchJob.status == FetchStatus.in_progress, FetchJob.created_at < zombie_cutoff)
+            .limit(500)
+        ).scalars().all()
+        zombie_count = 0
+        for zj in zombies:
+            if zj.attempts >= _MAX_UNAVAILABLE_ATTEMPTS:
+                zj.status = FetchStatus.failed
+                zj.last_error = f"Zombie task: gave up after {zj.attempts} attempts"
+            else:
+                zj.status = FetchStatus.unavailable
+                zj.next_run_at = now + timedelta(minutes=UNAVAILABLE_RETRY_MINUTES)
+                zj.last_error = "Zombie task: reset after hard timeout"
+            zombie_count += 1
+        if zombie_count:
+            session.commit()
+
         due_jobs = (
             session.execute(
                 select(FetchJob)
@@ -107,12 +130,22 @@ def fetch_link_metrics(self, fetch_job_id: int) -> None:
             session.commit()
             return
         except ParserUnavailableError as exc:
+            if job.attempts >= _MAX_UNAVAILABLE_ATTEMPTS:
+                job.status = FetchStatus.failed
+                job.last_error = f"Gave up after {job.attempts} attempts: {exc}"
+                session.commit()
+                return
             job.status = FetchStatus.unavailable
             job.last_error = str(exc)
             job.next_run_at = now + timedelta(minutes=UNAVAILABLE_RETRY_MINUTES)
             session.commit()
             return
         except SoftTimeLimitExceeded:
+            if job.attempts >= _MAX_UNAVAILABLE_ATTEMPTS:
+                job.status = FetchStatus.failed
+                job.last_error = f"Gave up after {job.attempts} attempts: task timed out"
+                session.commit()
+                return
             job.status = FetchStatus.unavailable
             job.last_error = "Task timed out (soft limit exceeded)"
             job.next_run_at = now + timedelta(minutes=UNAVAILABLE_RETRY_MINUTES)
