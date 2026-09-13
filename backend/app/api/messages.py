@@ -114,13 +114,14 @@ def _add_links(message: Message, raw_urls: list[str], existing_urls: set[str] | 
 async def _to_detail(message: Message, links_out: list[dict] | None = None, db: AsyncSession | None = None) -> MessageDetail:
     snapshot = message.snapshot
     links_with_metrics = 0
-    links_pending = 0
+    links_in_queue = 0
+    links_processing = 0
+    links_failed = 0
     first_metric_at = None
     last_metric_at = None
 
     if links_out:
         links_with_metrics = sum(1 for item in links_out if item["latest_metrics"] is not None)
-        links_pending = len(links_out) - links_with_metrics
         metric_dates = [
             item["latest_metrics"].fetched_at
             for item in links_out
@@ -129,6 +130,23 @@ async def _to_detail(message: Message, links_out: list[dict] | None = None, db: 
         if metric_dates:
             first_metric_at = min(metric_dates)
             last_metric_at = max(metric_dates)
+
+    # Get real queue stats from fetch_jobs (single query)
+    if db:
+        queue_stats = (await db.execute(
+            select(FetchJob.status, func.count())
+            .join(Link, Link.id == FetchJob.link_id)
+            .where(Link.message_id == message.id)
+            .group_by(FetchJob.status)
+        )).all()
+        for status_val, count in queue_stats:
+            sv = status_val.value if hasattr(status_val, "value") else str(status_val)
+            if sv in ("pending", "unavailable"):
+                links_in_queue += count
+            elif sv == "in_progress":
+                links_processing += count
+            elif sv == "failed":
+                links_failed += count
 
     return MessageDetail(
         id=message.id,
@@ -142,7 +160,9 @@ async def _to_detail(message: Message, links_out: list[dict] | None = None, db: 
         views_total=snapshot.views_total if snapshot else 0,
         links_count=snapshot.links_count if snapshot else len(links_out or []),
         links_with_metrics=links_with_metrics,
-        links_pending=links_pending,
+        links_in_queue=links_in_queue,
+        links_processing=links_processing,
+        links_failed=links_failed,
         first_metric_at=first_metric_at,
         last_metric_at=last_metric_at,
         created_at=message.created_at,
@@ -279,7 +299,7 @@ async def create_message(
     await db.commit()
     message = await _get_owned_message(message.id, user, db)
     links_out = await _load_links_with_metrics(message.id, db)
-    return await _to_detail(message, links_out)
+    return await _to_detail(message, links_out, db)
 
 
 @router.get("/messages/{message_id}", response_model=MessageDetail)
@@ -288,7 +308,7 @@ async def get_message(
 ) -> MessageDetail:
     message = await _get_owned_message(message_id, user, db)
     links_out = await _load_links_with_metrics(message_id, db)
-    return await _to_detail(message, links_out)
+    return await _to_detail(message, links_out, db)
 
 
 @router.get("/messages/{message_id}/metrics/export")
@@ -404,7 +424,7 @@ async def update_message(
     await db.commit()
     message = await _get_owned_message(message_id, user, db)
     links_out = await _load_links_with_metrics(message_id, db)
-    return await _to_detail(message, links_out)
+    return await _to_detail(message, links_out, db)
 
 
 @router.delete("/messages/{message_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -574,4 +594,4 @@ async def upload_links_file(
     await db.commit()
     message = await _get_owned_message(message_id, user, db)
     links_out = await _load_links_with_metrics(message_id, db)
-    return await _to_detail(message, links_out)
+    return await _to_detail(message, links_out, db)

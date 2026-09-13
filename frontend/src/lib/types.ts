@@ -51,7 +51,9 @@ export interface MessageDetail extends MessageListItem {
   links: Link[];
   links_count: number;
   links_with_metrics: number;
-  links_pending: number;
+  links_in_queue: number;
+  links_processing: number;
+  links_failed: number;
   first_metric_at: string | null;
   last_metric_at: string | null;
 }

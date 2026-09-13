@@ -70,7 +70,9 @@ class MessageDetail(BaseModel):
     views_total: int = 0
     links_count: int = 0
     links_with_metrics: int = 0
-    links_pending: int = 0
+    links_in_queue: int = 0
+    links_processing: int = 0
+    links_failed: int = 0
     first_metric_at: datetime | None = None
     last_metric_at: datetime | None = None
     created_at: datetime
