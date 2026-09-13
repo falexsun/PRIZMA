@@ -6,6 +6,7 @@ from bs4 import BeautifulSoup, Tag
 
 from app.parsers.base import Metrics, ParserNotFoundError, ParserUnavailableError
 from app.services.hashtag_extractor import extract_hashtags
+from app.services.proxy_routing import get_proxy_for_platform
 
 
 def _parse_count(value: str | int | None) -> int:
@@ -88,23 +89,41 @@ def _extract_reactions(block: Tag) -> int:
     return total
 
 
+_TELEGRAM_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
+
+async def _fetch_preview(preview_url: str, proxy: str | None) -> httpx.Response:
+    """Fetch Telegram public preview page with given proxy."""
+    async with httpx.AsyncClient(timeout=20, follow_redirects=True, proxy=proxy) as client:
+        return await client.get(preview_url, headers=_TELEGRAM_HEADERS)
+
+
 async def fetch(url: str) -> Metrics:
     channel, msg_id = _channel_and_msg_id(url)
     preview_url = f"https://t.me/s/{channel}?before={msg_id + 1}"
-    try:
-        async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
-            response = await client.get(
-                preview_url,
-                headers={
-                    "User-Agent": (
-                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
-                    ),
-                    "Accept-Language": "en-US,en;q=0.9",
-                },
-            )
-    except httpx.HTTPError as exc:
-        raise ParserUnavailableError(f"Telegram public preview request failed: {exc}") from exc
+    proxy = get_proxy_for_platform("telegram")
+
+    # Try with proxy first, then without proxy as fallback
+    response = None
+    last_exc: Exception | None = None
+    for attempt_proxy in ([proxy, None] if proxy else [None]):
+        try:
+            response = await _fetch_preview(preview_url, attempt_proxy)
+            break
+        except httpx.HTTPError as exc:
+            last_exc = exc
+            continue
+
+    if response is None:
+        raise ParserUnavailableError(
+            f"Telegram public preview request failed (tried with{'out' if not proxy else ''} proxy): {last_exc}"
+        ) from last_exc
 
     if response.status_code == 404:
         raise ParserNotFoundError(f"Telegram post not found: {channel}/{msg_id}")

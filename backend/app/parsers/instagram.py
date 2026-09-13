@@ -41,6 +41,7 @@ def _fetch_public_sync(url: str) -> Metrics:
     likes = 0
     comments = 0
     views = 0
+    page_fetched = False  # Track whether we successfully loaded any page
 
     # Step 1: Try embed page (returns exact numbers for posts/carousels)
     for _ in range(2):
@@ -48,6 +49,7 @@ def _fetch_public_sync(url: str) -> Metrics:
             with httpx.Client(proxy=proxy_url, timeout=15, follow_redirects=True) as client:
                 response = client.get(embed_url, headers=headers)
             if response.status_code == 200:
+                page_fetched = True
                 html = response.text
                 likes_match = re.search(r'"likes_count":\s*(\d+)', html)
                 if likes_match:
@@ -74,6 +76,7 @@ def _fetch_public_sync(url: str) -> Metrics:
                 with httpx.Client(proxy=proxy_url, timeout=15, follow_redirects=True) as client:
                     response = client.get(clean_url, headers=headers)
                 if response.status_code == 200:
+                    page_fetched = True
                     desc = BeautifulSoup(response.text, "html.parser").find(
                         "meta", attrs={"property": "og:description"}
                     )
@@ -94,6 +97,8 @@ def _fetch_public_sync(url: str) -> Metrics:
     saves = 0
     if "/reel/" in clean_url:
         pw_likes, pw_comments, pw_views, pw_shares, pw_saves = _fetch_reel_via_playwright(clean_url, proxy_url)
+        if pw_likes or pw_comments or pw_views:
+            page_fetched = True
         # Playwright is the only public fallback here that can expose
         # shares/saves for Reels. Keep embed/og counters when present and
         # use browser data to fill missing fields.
@@ -103,7 +108,8 @@ def _fetch_public_sync(url: str) -> Metrics:
         shares = pw_shares
         saves = pw_saves
 
-    if not likes and not comments and not views:
+    # Only raise if we couldn't reach any page at all (vs genuinely zero engagement)
+    if not page_fetched and not likes and not comments and not views:
         raise ParserUnavailableError("Instagram did not expose engagement metrics")
 
     return Metrics(
@@ -446,26 +452,17 @@ async def fetch(url: str) -> Metrics:
         )
 
     def _complete_enough(metrics: Metrics) -> bool:
-        if not is_reel:
-            return bool(metrics.likes or metrics.comments)
-        # Reels sources expose different subsets. Calcxi is valuable because
-        # it may return shares/saves, but GraphQL/public scraping can still
-        # fill comments, views or caption hashtags.
-        return bool(
-            metrics.views
-            and metrics.likes
-            and metrics.comments
-            and (metrics.reposts or metrics.saves)
-        )
+        # If we got any non-zero metric, the result is complete enough.
+        # Zeros are valid engagement data (new/empty posts).
+        return bool(metrics.likes or metrics.comments or metrics.views or metrics.reposts or metrics.saves)
 
     # Strategy 1: Calcxi (free — Reels only, returns views/shares/saves)
     if is_reel:
         try:
             calcxi = await asyncio.wait_for(_fetch_via_calcxi(url), timeout=90)
-            if calcxi.views or calcxi.likes or calcxi.comments or calcxi.reposts or calcxi.saves:
-                calcxi_result = calcxi
-                if _complete_enough(calcxi):
-                    return calcxi
+            calcxi_result = calcxi
+            if _complete_enough(calcxi):
+                return calcxi
         except asyncio.TimeoutError:
             pass
         except Exception:
@@ -478,11 +475,10 @@ async def fetch(url: str) -> Metrics:
             asyncio.to_thread(_fetch_via_direct_graphql, url),
             timeout=30,
         )
-        if result.likes or result.comments:
-            merged = _merge_metrics(result, calcxi_result)
-            if is_reel:
-                return await _ensure_reel_shares_saves(clean_url, merged)
-            return merged
+        merged = _merge_metrics(result, calcxi_result)
+        if is_reel:
+            return await _ensure_reel_shares_saves(clean_url, merged)
+        return merged
     except asyncio.TimeoutError:
         pass
     except Exception:

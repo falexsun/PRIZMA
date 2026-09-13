@@ -27,7 +27,7 @@ def _parse_compact_count(value: str | None) -> int:
     return int(number)
 
 
-def _fetch_via_playwright_sync(url: str) -> Metrics:
+def _fetch_via_playwright_sync(url: str, proxy: str | None = None) -> Metrics:
     """Fetch Dzen article/shorts metrics via headless Chromium.
 
     Dzen articles are behind Yandex SSO for plain HTTP requests, so a real
@@ -51,7 +51,10 @@ def _fetch_via_playwright_sync(url: str) -> Metrics:
     is_shorts = "/shorts/" in url
 
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True)
+        launch_args: dict = {"headless": True}
+        if proxy:
+            launch_args["proxy"] = {"server": proxy}
+        browser = playwright.chromium.launch(**launch_args)
         context = browser.new_context(
             locale="ru-RU",
             user_agent=(
@@ -148,8 +151,8 @@ def _fetch_via_playwright_sync(url: str) -> Metrics:
         finally:
             browser.close()
 
-    if views == 0 and likes == 0 and comments == 0:
-        raise ParserUnavailableError(f"DZEN_NO_METRICS: Dzen rendered no public metrics: {url}")
+    # Note: zeros are valid — some articles genuinely have no engagement yet.
+    # Only raise if the page didn't render at all (handled above by selector waits).
 
     return Metrics(
         likes=likes,
@@ -164,10 +167,10 @@ def _fetch_via_playwright_sync(url: str) -> Metrics:
 _DZEN_BROWSER_TIMEOUT = 45  # seconds — hard cap for Dzen Playwright fetch
 
 
-async def _fetch_via_browser(url: str) -> Metrics:
+async def _fetch_via_browser(url: str, proxy: str | None = None) -> Metrics:
     try:
         return await asyncio.wait_for(
-            asyncio.to_thread(_fetch_via_playwright_sync, url),
+            asyncio.to_thread(_fetch_via_playwright_sync, url, proxy),
             timeout=_DZEN_BROWSER_TIMEOUT,
         )
     except asyncio.TimeoutError:
@@ -226,4 +229,15 @@ async def fetch(url: str) -> Metrics:
         pass  # Fall through to browser
 
     # Step 3: Playwright browser (reliable but heavier)
-    return await _fetch_via_browser(clean_url)
+    # Try with proxy first, then without proxy as fallback
+    proxy = get_proxy_for_platform("dzen")
+    last_exc: Exception | None = None
+    for attempt_proxy in ([proxy, None] if proxy else [None]):
+        try:
+            return await _fetch_via_browser(clean_url, proxy=attempt_proxy)
+        except (ParserNotFoundError, ParserUnavailableError) as exc:
+            if isinstance(exc, ParserNotFoundError):
+                raise
+            last_exc = exc
+            continue
+    raise last_exc  # type: ignore[misc]

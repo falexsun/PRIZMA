@@ -13,6 +13,53 @@ from app.services.proxy_routing import get_proxy_for_platform
 _OK_VIDEO_PATH = re.compile(r"/(?:video|clip|live|videoembed|web-api/video/moviePlayer)/")
 
 
+def _dismiss_ok_overlays(page) -> None:
+    """Attempt to close common OK.ru popups/overlays/cookie banners."""
+    for sel in [
+        '[data-l*="cookie"] button',
+        ".cookie__button",
+        ".cookie__close",
+        "button[data-l*='close']",
+        ".modal-new_uc [data-l*='close']",
+        ".widget-modal .close",
+        ".modal-new__close",
+        "button[aria-label='Закрыть']",
+        "button[aria-label='Close']",
+        ".uc-banner .uc-btn",
+    ]:
+        try:
+            btn = page.locator(sel).first
+            if btn.count() and btn.is_visible(timeout=300):
+                btn.click(timeout=500)
+                page.wait_for_timeout(300)
+        except Exception:
+            pass
+
+    # Press Escape to close any modal
+    try:
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(200)
+    except Exception:
+        pass
+
+    # Remove fixed/sticky overlays via JS (last resort)
+    try:
+        page.evaluate("""
+            () => {
+                document.querySelectorAll(
+                    '[class*="cookie"], [class*="overlay"], [class*="modal-new"], [class*="uc-banner"]'
+                ).forEach(el => {
+                    const style = window.getComputedStyle(el);
+                    if (style.position === 'fixed' || style.position === 'sticky') {
+                        el.remove();
+                    }
+                });
+            }
+        """)
+    except Exception:
+        pass
+
+
 def _parse_compact_count(value: str | None) -> int:
     """Parse compact count like '2.8K', '1,5 млн', '500 тыс'."""
     if not value:
@@ -72,6 +119,8 @@ def _fetch_video_playwright_sync(url: str) -> Metrics:
                 raise ParserUnavailableError(
                     f"OK_NO_VIDEO_PLAYER: OK page did not render video player: {url}"
                 ) from exc
+
+            _dismiss_ok_overlays(page)
 
             try:
                 page.wait_for_selector(".comments-counter", timeout=5_000)
@@ -277,6 +326,7 @@ def _fetch_topic_via_feed_pagination_sync(feed_url: str, topic_id: str, max_clic
         try:
             page.goto(feed_url, wait_until="domcontentloaded", timeout=30000)
             page.wait_for_timeout(3000)
+            _dismiss_ok_overlays(page)
 
             for _ in range(max_clicks):
                 # Check if topic is on the page
@@ -292,13 +342,20 @@ def _fetch_topic_via_feed_pagination_sync(feed_url: str, topic_id: str, max_clic
                             return _parse_ok_reaction_text(text)
                     return (0, 0)
 
-                # Scroll down and click "Показать еще"
+                # Scroll down, dismiss overlays, and click "Показать еще"
                 page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 page.wait_for_timeout(1500)
+                _dismiss_ok_overlays(page)
                 clicked = page.evaluate("""
                     () => {
                         const btns = document.querySelectorAll('.js-show-more');
-                        for (const btn of btns) { btn.click(); return true; }
+                        for (const btn of btns) {
+                            if (btn.offsetParent !== null) {
+                                btn.scrollIntoView({block: 'center'});
+                                btn.click();
+                                return true;
+                            }
+                        }
                         return false;
                     }
                 """)
@@ -411,6 +468,8 @@ def _ok_page_playwright_sync(url: str) -> Metrics:
             title_lower = page.title().lower()
             if "не найден" in title_lower or "not found" in title_lower:
                 raise ParserNotFoundError(f"OK_CONTENT_NOT_FOUND: {url}")
+
+            _dismiss_ok_overlays(page)
 
             likes = 0
             reposts = 0
