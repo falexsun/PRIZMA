@@ -29,17 +29,7 @@ router = APIRouter(tags=["messages"], dependencies=[Depends(get_current_user)])
 
 
 def _visible_messages_query(user: User):
-    query = select(Message).options(
-        selectinload(Message.topics),
-        selectinload(Message.links).selectinload(Link.metrics_history),
-        selectinload(Message.snapshot),
-    )
-    if user.role != UserRole.admin:
-        query = query.where(Message.user_id == user.id)
-    return query
-
-
-def _visible_messages_list_query(user: User):
+    """Load message with topics and snapshot (no links — those are loaded separately)."""
     query = select(Message).options(
         selectinload(Message.topics),
         selectinload(Message.snapshot),
@@ -47,6 +37,9 @@ def _visible_messages_list_query(user: User):
     if user.role != UserRole.admin:
         query = query.where(Message.user_id == user.id)
     return query
+
+
+_visible_messages_list_query = _visible_messages_query  # same now
 
 
 async def _get_owned_message(message_id: int, user: User, db: AsyncSession) -> Message:
@@ -57,34 +50,69 @@ async def _get_owned_message(message_id: int, user: User, db: AsyncSession) -> M
     return message
 
 
-def _add_links(message: Message, raw_urls: list[str]) -> None:
-    existing_normalized = {link.url_normalized for link in message.links}
+async def _load_links_with_metrics(message_id: int, db: AsyncSession) -> list[dict]:
+    """Load links with only the latest metric per link (no eager-loading all history)."""
+    # Subquery: max fetched_at per link
+    latest_subq = (
+        select(
+            LinkMetrics.link_id,
+            func.max(LinkMetrics.fetched_at).label("max_fetched_at"),
+        )
+        .group_by(LinkMetrics.link_id)
+        .subquery()
+    )
+
+    query = (
+        select(Link, LinkMetrics)
+        .outerjoin(latest_subq, latest_subq.c.link_id == Link.id)
+        .outerjoin(
+            LinkMetrics,
+            (LinkMetrics.link_id == latest_subq.c.link_id)
+            & (LinkMetrics.fetched_at == latest_subq.c.max_fetched_at),
+        )
+        .where(Link.message_id == message_id)
+        .order_by(Link.id)
+    )
+    rows = (await db.execute(query)).all()
+    return [
+        {
+            "id": link.id,
+            "url_raw": link.url_raw,
+            "url_normalized": link.url_normalized,
+            "platform": link.platform,
+            "hashtags": link.hashtags or "",
+            "created_at": link.created_at,
+            "latest_metrics": metrics,
+        }
+        for link, metrics in rows
+    ]
+
+
+def _add_links(message: Message, raw_urls: list[str], existing_urls: set[str] | None = None) -> list[Link]:
+    """Add links to a message, skipping duplicates. Returns newly created Link objects."""
+    if existing_urls is None:
+        existing_urls = set()
+    new_links = []
     for raw_url in raw_urls:
         try:
             normalized, platform = normalize_url(raw_url)
         except UnsupportedUrlError:
             continue
-        if normalized in existing_normalized:
+        if normalized in existing_urls:
             continue
-        existing_normalized.add(normalized)
-        link = Link(url_raw=raw_url, url_normalized=normalized, platform=platform)
-        message.links.append(link)
+        existing_urls.add(normalized)
+        link = Link(
+            message_id=message.id,
+            url_raw=raw_url,
+            url_normalized=normalized,
+            platform=platform,
+        )
+        new_links.append(link)
+    return new_links
 
 
-def _to_detail(message: Message) -> MessageDetail:
+def _to_detail(message: Message, links_out: list[dict] | None = None) -> MessageDetail:
     snapshot = message.snapshot
-    links_out = []
-    for link in message.links:
-        latest = max(link.metrics_history, key=lambda m: m.fetched_at, default=None)
-        links_out.append({
-            "id": link.id,
-            "url_raw": link.url_raw,
-            "url_normalized": link.url_normalized,
-            "platform": link.platform,
-            "created_at": link.created_at,
-            "latest_metrics": latest,
-        })
-
     return MessageDetail(
         id=message.id,
         department=message.department,
@@ -92,10 +120,10 @@ def _to_detail(message: Message) -> MessageDetail:
         title=message.title,
         tone=message.tone,
         topics=message.topics,
-        links=links_out,
+        links=links_out or [],
         si_total=snapshot.si_total if snapshot else 0,
         views_total=snapshot.views_total if snapshot else 0,
-        links_count=snapshot.links_count if snapshot else len(message.links),
+        links_count=snapshot.links_count if snapshot else len(links_out or []),
         created_at=message.created_at,
         updated_at=message.updated_at,
     )
@@ -207,32 +235,30 @@ async def create_message(
         content_format=payload.content_format,
         topics=topics,
     )
-    _add_links(message, payload.links)
-    # Capture the Link objects now: when zero links are added, message.links
-    # is a freshly-initialized (never-appended-to) collection that SQLAlchemy
-    # expires after flush() assigns the parent's PK, and re-accessing it then
-    # requires a lazy SELECT that crashes outside an async context.
-    created_links = list(message.links)
+    db.add(message)
+    await db.flush()  # assigns message.id
 
-    if payload.links and not created_links:
+    new_links = _add_links(message, payload.links)
+    if payload.links and not new_links:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             "None of the provided links matched a supported platform (vk, telegram, youtube, tiktok, instagram, dzen, max)",
         )
 
-    db.add(message)
-    await db.flush()
+    for link in new_links:
+        db.add(link)
+    await db.flush()  # assigns link.id
 
-    db.add(MessageMetricsSnapshot(message_id=message.id, links_count=len(created_links)))
+    db.add(MessageMetricsSnapshot(message_id=message.id, links_count=len(new_links)))
     now = datetime.now(timezone.utc)
-    for i, link in enumerate(created_links):
-        # Stagger jobs: 0s, 5s, 10s, ... to avoid overwhelming the worker queue
+    for i, link in enumerate(new_links):
         stagger = timedelta(seconds=min(i * 5, 300))
         db.add(FetchJob(link_id=link.id, next_run_at=now + stagger))
 
     await db.commit()
     message = await _get_owned_message(message.id, user, db)
-    return _to_detail(message)
+    links_out = await _load_links_with_metrics(message.id, db)
+    return _to_detail(message, links_out)
 
 
 @router.get("/messages/{message_id}", response_model=MessageDetail)
@@ -240,7 +266,8 @@ async def get_message(
     message_id: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
 ) -> MessageDetail:
     message = await _get_owned_message(message_id, user, db)
-    return _to_detail(message)
+    links_out = await _load_links_with_metrics(message_id, db)
+    return _to_detail(message, links_out)
 
 
 @router.get("/messages/{message_id}/metrics/export")
@@ -266,16 +293,16 @@ async def export_message_metrics(
         ]
     )
 
-    for link in message.links:
-        latest = max(link.metrics_history, key=lambda m: m.fetched_at, default=None)
-        is_instagram_reel = (
-            (link.platform.value if hasattr(link.platform, "value") else str(link.platform)) == "instagram"
-            and "/reel/" in link.url_normalized
-        )
+    links_out = await _load_links_with_metrics(message_id, db)
+    for item in links_out:
+        link = item  # dict with keys: url_raw, url_normalized, platform, hashtags, latest_metrics
+        latest = link["latest_metrics"]
+        platform_val = link["platform"].value if hasattr(link["platform"], "value") else str(link["platform"])
+        is_instagram_reel = platform_val == "instagram" and "/reel/" in link["url_normalized"]
         reposts = "" if latest and is_instagram_reel and latest.reposts == 0 else (latest.reposts if latest else "")
         sheet.append(
             [
-                link.url_raw,
+                link["url_raw"],
                 latest.likes if latest else "",
                 reposts,
                 latest.comments if latest else "",
@@ -283,7 +310,7 @@ async def export_message_metrics(
                 latest.views if latest else "",
                 latest.si if latest else "",
                 latest.fetched_at.replace(tzinfo=None) if latest and latest.fetched_at else "",
-                link.hashtags or "",
+                link["hashtags"] or "",
             ]
         )
 
@@ -324,21 +351,39 @@ async def update_message(
         message.topics = topics
 
     if payload.link_ids_remove:
-        message.links = [link for link in message.links if link.id not in set(payload.link_ids_remove)]
+        await db.execute(
+            Link.__table__.delete().where(
+                Link.message_id == message_id, Link.id.in_(payload.link_ids_remove)
+            )
+        )
 
     if payload.links_add:
-        new_links_start = len(message.links)
-        _add_links(message, payload.links_add)
+        # Get existing normalized URLs for dedup
+        existing = set(
+            (await db.execute(select(Link.url_normalized).where(Link.message_id == message_id)))
+            .scalars()
+            .all()
+        )
+        new_links = _add_links(message, payload.links_add, existing)
+        for link in new_links:
+            db.add(link)
         await db.flush()
-        for link in message.links[new_links_start:]:
-            db.add(FetchJob(link_id=link.id))
+        now = datetime.now(timezone.utc)
+        for i, link in enumerate(new_links):
+            stagger = timedelta(seconds=min(i * 5, 300))
+            db.add(FetchJob(link_id=link.id, next_run_at=now + stagger))
 
+    # Update links_count
+    links_count = (await db.execute(
+        select(func.count()).select_from(Link).where(Link.message_id == message_id)
+    )).scalar() or 0
     if message.snapshot:
-        message.snapshot.links_count = len(message.links)
+        message.snapshot.links_count = links_count
 
     await db.commit()
     message = await _get_owned_message(message_id, user, db)
-    return _to_detail(message)
+    links_out = await _load_links_with_metrics(message_id, db)
+    return _to_detail(message, links_out)
 
 
 @router.delete("/messages/{message_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -405,7 +450,9 @@ async def refresh_link_now(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, int]:
     message = await _get_owned_message(message_id, user, db)
-    link = next((item for item in message.links if item.id == link_id), None)
+    link = (await db.execute(
+        select(Link).where(Link.id == link_id, Link.message_id == message_id)
+    )).scalar_one_or_none()
     if link is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Link not found")
 
@@ -479,18 +526,31 @@ async def upload_links_file(
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
-    if len(message.links) + len(urls) > MAX_LINKS:
+    # Get existing links count and URLs for dedup
+    existing_urls = set(
+        (await db.execute(select(Link.url_normalized).where(Link.message_id == message_id)))
+        .scalars()
+        .all()
+    )
+    existing_count = len(existing_urls)
+    if existing_count + len(urls) > MAX_LINKS:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Too many links: max {MAX_LINKS}")
 
-    new_links_start = len(message.links)
-    _add_links(message, urls)
+    new_links = _add_links(message, urls, existing_urls)
+    for link in new_links:
+        db.add(link)
     await db.flush()
-    for link in message.links[new_links_start:]:
-        db.add(FetchJob(link_id=link.id))
 
+    now = datetime.now(timezone.utc)
+    for i, link in enumerate(new_links):
+        stagger = timedelta(seconds=min(i * 5, 300))
+        db.add(FetchJob(link_id=link.id, next_run_at=now + stagger))
+
+    new_count = existing_count + len(new_links)
     if message.snapshot:
-        message.snapshot.links_count = len(message.links)
+        message.snapshot.links_count = new_count
 
     await db.commit()
     message = await _get_owned_message(message_id, user, db)
-    return _to_detail(message)
+    links_out = await _load_links_with_metrics(message_id, db)
+    return _to_detail(message, links_out)

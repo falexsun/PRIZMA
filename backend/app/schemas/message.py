@@ -6,7 +6,7 @@ from app.models.enums import Tone
 from app.schemas.link import LinkWithMetricsOut
 from app.schemas.topic import TopicOut
 
-MAX_LINKS = 10_000
+MAX_LINKS = 20_000
 
 
 class MessageCreate(BaseModel):

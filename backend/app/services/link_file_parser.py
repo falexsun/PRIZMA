@@ -3,7 +3,7 @@ import io
 
 import openpyxl
 
-MAX_ROWS = 10_000
+MAX_ROWS = 20_000
 
 
 def parse_links_file(filename: str, content: bytes) -> list[str]:
