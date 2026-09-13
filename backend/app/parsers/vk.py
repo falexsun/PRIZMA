@@ -15,9 +15,9 @@ VK_API_BASE = "https://api.vk.com/method"
 VK_API_VERSION = "5.199"
 
 # Distributed rate limiter via Redis — shared across all Celery worker processes.
-# VK allows ~3 req/sec; we use 500ms minimum interval (2 req/sec) for safety.
+# VK allows ~3 req/sec; we use 350ms minimum interval (~2.8 req/sec).
 _VK_RATE_KEY = "vk:rate_limit:last_ts"
-_VK_MIN_INTERVAL = 0.5  # seconds between requests (2 req/sec, safe margin under 3)
+_VK_MIN_INTERVAL = 0.35  # seconds between requests (~2.8 req/sec, within VK's 3/sec limit)
 
 
 def _vk_rate_limit_sync() -> None:

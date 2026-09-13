@@ -37,7 +37,7 @@ def _queue_for_platform(platform: str) -> str:
 @celery_app.task(name="app.workers.tasks.enqueue_due_fetch_jobs")
 def enqueue_due_fetch_jobs() -> int:
     now = datetime.now(timezone.utc)
-    MAX_BATCH = 200  # Don't flood the queue — process in batches
+    MAX_BATCH = 5000  # Enqueue all due jobs; workers are rate-limited per platform anyway
 
     with SyncSessionLocal() as session:
         # Clean up zombie in_progress jobs stuck for > 5 minutes (hard timeout kills)

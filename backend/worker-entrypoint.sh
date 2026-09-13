@@ -38,11 +38,11 @@ else
         [ $CONCURRENCY -gt 8 ] && CONCURRENCY=8
     else
         # Fast worker: HTTP-based, lightweight (~50MB per instance)
-        # Use most cores, leave 1 for the system
-        CONCURRENCY=$(( TOTAL_CORES - 1 ))
+        # Cap at 6 — VK rate limiter (2.8 req/sec) can't serve more efficiently.
+        # More workers just increase rate-limit contention and task latency.
+        CONCURRENCY=$(( TOTAL_CORES / 2 ))
         [ $CONCURRENCY -lt 2 ] && CONCURRENCY=2
-        # Cap at 16
-        [ $CONCURRENCY -gt 16 ] && CONCURRENCY=16
+        [ $CONCURRENCY -gt 6 ] && CONCURRENCY=6
     fi
 fi
 
