@@ -17,10 +17,20 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column("vk_groups", sa.Column("backfill", sa.Boolean(), server_default=sa.false()))
-    op.add_column("vk_groups", sa.Column("backfill_completed", sa.Boolean(), server_default=sa.false()))
+    bind = op.get_bind()
+    existing_columns = {column["name"] for column in sa.inspect(bind).get_columns("vk_groups")}
+
+    if "backfill" not in existing_columns:
+        op.add_column("vk_groups", sa.Column("backfill", sa.Boolean(), server_default=sa.false()))
+    if "backfill_completed" not in existing_columns:
+        op.add_column("vk_groups", sa.Column("backfill_completed", sa.Boolean(), server_default=sa.false()))
 
 
 def downgrade() -> None:
-    op.drop_column("vk_groups", "backfill_completed")
-    op.drop_column("vk_groups", "backfill")
+    bind = op.get_bind()
+    existing_columns = {column["name"] for column in sa.inspect(bind).get_columns("vk_groups")}
+
+    if "backfill_completed" in existing_columns:
+        op.drop_column("vk_groups", "backfill_completed")
+    if "backfill" in existing_columns:
+        op.drop_column("vk_groups", "backfill")
