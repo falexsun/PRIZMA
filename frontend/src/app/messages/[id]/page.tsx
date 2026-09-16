@@ -28,6 +28,8 @@ import { TONE_CONFIG, PLATFORM_LABELS } from "@/lib/theme";
 import { formatCompactNumber, formatFullNumber } from "@/lib/numbers";
 import clsx from "clsx";
 
+const ENABLE_LINK_SORTING = false;
+
 export default function MessageCardPage() {
   const params = useParams<{ id: string }>();
   const messageId = Number(params.id);
@@ -66,6 +68,8 @@ export default function MessageCardPage() {
       const q = search.toLowerCase();
       links = links.filter((l) => l.url_raw.toLowerCase().includes(q) || l.url_normalized.toLowerCase().includes(q));
     }
+    if (!ENABLE_LINK_SORTING) return links;
+
     return [...links].sort((a, b) => {
       const numberValue = (link: MessageDetail["links"][number]) => {
         const metrics = link.latest_metrics;
@@ -89,7 +93,9 @@ export default function MessageCardPage() {
   }, [message, search, platformFilter, hashtagFilter, linkSortBy, linkSortDir]);
 
   // Reset page when filters change
-  const filtersKey = `${search}-${platformFilter}-${hashtagFilter}-${linkSortBy}-${linkSortDir}`;
+  const filtersKey = ENABLE_LINK_SORTING
+    ? `${search}-${platformFilter}-${hashtagFilter}-${linkSortBy}-${linkSortDir}`
+    : `${search}-${platformFilter}-${hashtagFilter}`;
   useMemo(() => setPage(0), [filtersKey]);
 
   const totalPages = Math.ceil(filteredLinks.length / PAGE_SIZE);
@@ -405,29 +411,33 @@ export default function MessageCardPage() {
               <option key={h} value={h}>#{h}</option>
             ))}
           </select>
-          <select
-            className="w-44"
-            value={linkSortBy}
-            onChange={(e) => setLinkSortBy(e.target.value as typeof linkSortBy)}
-          >
-            <option value="si">Сортировка: SI</option>
-            <option value="views">Сортировка: просмотры</option>
-            <option value="likes">Сортировка: лайки</option>
-            <option value="comments">Сортировка: комменты</option>
-            <option value="reposts">Сортировка: репосты</option>
-            <option value="saves">Сортировка: сохранения</option>
-            <option value="updated">Сортировка: обновлено</option>
-            <option value="platform">Сортировка: платформа</option>
-            <option value="url">Сортировка: URL</option>
-          </select>
-          <select
-            className="w-36"
-            value={linkSortDir}
-            onChange={(e) => setLinkSortDir(e.target.value as typeof linkSortDir)}
-          >
-            <option value="desc">По убыванию</option>
-            <option value="asc">По возрастанию</option>
-          </select>
+          {ENABLE_LINK_SORTING && (
+            <>
+              <select
+                className="w-44"
+                value={linkSortBy}
+                onChange={(e) => setLinkSortBy(e.target.value as typeof linkSortBy)}
+              >
+                <option value="si">Сортировка: SI</option>
+                <option value="views">Сортировка: просмотры</option>
+                <option value="likes">Сортировка: лайки</option>
+                <option value="comments">Сортировка: комменты</option>
+                <option value="reposts">Сортировка: репосты</option>
+                <option value="saves">Сортировка: сохранения</option>
+                <option value="updated">Сортировка: обновлено</option>
+                <option value="platform">Сортировка: платформа</option>
+                <option value="url">Сортировка: URL</option>
+              </select>
+              <select
+                className="w-36"
+                value={linkSortDir}
+                onChange={(e) => setLinkSortDir(e.target.value as typeof linkSortDir)}
+              >
+                <option value="desc">По убыванию</option>
+                <option value="asc">По возрастанию</option>
+              </select>
+            </>
+          )}
           <div className="flex items-center gap-2">
             <button
               type="button"
