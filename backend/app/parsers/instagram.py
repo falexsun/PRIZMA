@@ -1,5 +1,6 @@
 import asyncio
 import re
+from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
@@ -10,6 +11,24 @@ from app.parsers.base import Metrics, ParserNotFoundError, ParserUnavailableErro
 from app.services.hashtag_extractor import extract_hashtags
 from app.services.proxy import normalize_proxy
 from app.services.proxy_routing import get_proxy_for_platform
+
+
+def _instagram_storage_state_path() -> Path:
+    return Path("uploads") / "instagram_storage_state.json"
+
+
+def _playwright_proxy(proxy_url: str | None) -> dict | None:
+    if not proxy_url:
+        return None
+    parsed = urlparse(proxy_url)
+    if not parsed.scheme or not parsed.hostname:
+        return {"server": proxy_url}
+    result = {"server": f"{parsed.scheme}://{parsed.hostname}:{parsed.port}"}
+    if parsed.username:
+        result["username"] = parsed.username
+    if parsed.password:
+        result["password"] = parsed.password
+    return result
 
 def _parse_public_count(value: str) -> int:
     """Parse Instagram's English public meta description counters."""
@@ -198,13 +217,12 @@ def _fetch_reel_via_playwright(url: str, proxy_url: str | None) -> tuple[int, in
             "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
             "locale": "en-US",
         }
-        if proxy_url:
-            parsed = urlparse(proxy_url)
-            context_kwargs["proxy"] = {
-                "server": f"{parsed.scheme}://{parsed.hostname}:{parsed.port}",
-                "username": parsed.username,
-                "password": parsed.password,
-            }
+        session_path = _instagram_storage_state_path()
+        if session_path.exists():
+            context_kwargs["storage_state"] = str(session_path)
+        proxy = _playwright_proxy(proxy_url)
+        if proxy:
+            context_kwargs["proxy"] = proxy
         context = browser.new_context(**context_kwargs)
         page = context.new_page()
 
@@ -231,6 +249,8 @@ def _fetch_reel_via_playwright(url: str, proxy_url: str | None) -> tuple[int, in
             page.wait_for_timeout(4500)
             page.mouse.wheel(0, 500)
             page.wait_for_timeout(1500)
+            if session_path.exists():
+                context.storage_state(path=str(session_path))
 
             shortcode = url.rstrip("/").split("/")[-1]
 
@@ -457,6 +477,35 @@ async def fetch(url: str) -> Metrics:
         return bool(metrics.likes or metrics.comments or metrics.views or metrics.reposts or metrics.saves)
 
     # Strategy 1: Calcxi (free — Reels only, returns views/shares/saves)
+    if is_reel and _instagram_storage_state_path().exists():
+        proxy_url = get_proxy_for_platform("instagram") or normalize_proxy(settings.instagram_proxy)
+        try:
+            pw_likes, pw_comments, pw_views, pw_shares, pw_saves = await asyncio.wait_for(
+                asyncio.to_thread(_fetch_reel_via_playwright, clean_url, proxy_url),
+                timeout=_INSTAGRAM_TIMEOUT,
+            )
+            has_real_signal = pw_comments or pw_views or pw_shares or pw_saves or pw_likes > 1
+            if has_real_signal:
+                hashtags = []
+                try:
+                    graphql_metrics = await asyncio.wait_for(
+                        asyncio.to_thread(_fetch_via_direct_graphql, url),
+                        timeout=15,
+                    )
+                    hashtags = graphql_metrics.hashtags
+                except Exception:
+                    pass
+                return Metrics(
+                    likes=pw_likes,
+                    reposts=pw_shares,
+                    comments=pw_comments,
+                    saves=pw_saves,
+                    views=pw_views,
+                    hashtags=hashtags,
+                )
+        except Exception:
+            pass
+
     if is_reel:
         try:
             calcxi = await asyncio.wait_for(_fetch_via_calcxi(url), timeout=90)

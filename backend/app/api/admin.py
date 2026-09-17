@@ -402,6 +402,14 @@ async def update_settings(payload: SettingsUpdate, db: AsyncSession = Depends(ge
 async def proxy_status(db: AsyncSession = Depends(get_db)) -> dict:
     values = await config_service.load_settings(db)
 
+    async def check_instagram_access(client: httpx.AsyncClient) -> tuple[bool, str]:
+        response = await client.get("https://www.instagram.com/yuzhniural74/reels/")
+        response.raise_for_status()
+        text_lower = response.text.lower()
+        if "challenge" in text_lower or "login" in text_lower:
+            return False, "Instagram opens through proxy, but returns login/challenge"
+        return True, f"Instagram HTTP {response.status_code}"
+
     async def check_proxy(key: str) -> dict:
         raw = values.get(key)
         proxy = normalize_proxy(raw)
@@ -409,10 +417,29 @@ async def proxy_status(db: AsyncSession = Depends(get_db)) -> dict:
             return {"configured": False, "valid": False, "message": "Not configured"}
         try:
             timeout = httpx.Timeout(connect=5.0, read=8.0, write=5.0, pool=5.0)
-            async with httpx.AsyncClient(timeout=timeout, proxy=proxy) as client:
+            async with httpx.AsyncClient(
+                timeout=timeout,
+                proxy=proxy,
+                follow_redirects=True,
+                trust_env=False,
+                headers=PLATFORM_CHECK_HEADERS,
+            ) as client:
                 response = await client.get("https://api.ipify.org?format=json")
-            response.raise_for_status()
-            ip = response.json().get("ip") or "unknown ip"
+                response.raise_for_status()
+                ip = response.json().get("ip") or "unknown ip"
+                if key == "non_ru_proxy":
+                    instagram_ok, instagram_message = await check_instagram_access(client)
+                    if not instagram_ok:
+                        return {
+                            "configured": True,
+                            "valid": False,
+                            "message": f"Proxy works, external IP: {ip}; {instagram_message}",
+                        }
+                    return {
+                        "configured": True,
+                        "valid": True,
+                        "message": f"Works, external IP: {ip}; {instagram_message}",
+                    }
             return {"configured": True, "valid": True, "message": f"Works, external IP: {ip}"}
         except Exception as exc:
             return {"configured": True, "valid": False, "message": f"Failed: {exc}"}

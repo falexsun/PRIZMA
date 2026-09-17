@@ -1,12 +1,17 @@
 """Platform-specific source discovery: fetch recent posts from a social media source."""
 
+import re
 import time
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 
 from app.core.config import settings
 from app.models.enums import Platform
+from app.services.proxy_routing import get_proxy_for_platform
 
 
 @dataclass
@@ -14,6 +19,17 @@ class DiscoveredPost:
     external_id: str
     url: str
     timestamp: float  # unix epoch
+
+
+class _QuietYtdlpLogger:
+    def debug(self, msg: str) -> None:
+        pass
+
+    def warning(self, msg: str) -> None:
+        pass
+
+    def error(self, msg: str) -> None:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -213,42 +229,36 @@ def discover_telegram(source_id: str, backfill: bool = False) -> list[Discovered
 # ---------------------------------------------------------------------------
 
 def discover_youtube(source_id: str, backfill: bool = False) -> list[DiscoveredPost]:
-    """Fetch recent uploads from a YouTube channel via API."""
-    api_key = settings.youtube_api_key
-    if not api_key:
-        raise RuntimeError("YouTube API key is not configured")
+    """Fetch recent uploads from a YouTube channel without the YouTube API.
 
-    # Get channel uploads playlist
-    timeout = httpx.Timeout(connect=5.0, read=10.0, write=5.0, pool=5.0)
-    resp = httpx.get("https://www.googleapis.com/youtube/v3/channels", params={
-        "part": "contentDetails",
-        "id": source_id,
-        "key": api_key,
-    }, timeout=timeout)
-    resp.raise_for_status()
-    data = resp.json()
-    items = data.get("items", [])
-    if not items:
-        return []
-
-    uploads_playlist = items[0]["contentDetails"]["relatedPlaylists"]["uploads"]
-
-    # Get videos from uploads playlist
+    @handles are resolved through yt-dlp, while channel ids use the public
+    uploads RSS feed.
+    """
     count = 50 if backfill else 10
-    resp = httpx.get("https://www.googleapis.com/youtube/v3/playlistItems", params={
-        "part": "snippet",
-        "playlistId": uploads_playlist,
-        "maxResults": str(count),
-        "key": api_key,
-    }, timeout=timeout)
+    if source_id.strip().lstrip("/").startswith("@"):
+        ytdlp_posts = _discover_youtube_via_ytdlp(source_id, count=count)
+        if ytdlp_posts:
+            return ytdlp_posts
+
+    channel_id = _resolve_youtube_channel_id(source_id)
+    timeout = httpx.Timeout(connect=5.0, read=10.0, write=5.0, pool=5.0)
+    resp = httpx.get(
+        "https://www.youtube.com/feeds/videos.xml",
+        params={"channel_id": channel_id},
+        timeout=timeout,
+        follow_redirects=True,
+        headers={"User-Agent": "Mozilla/5.0"},
+    )
     resp.raise_for_status()
-    data = resp.json()
 
     result: list[DiscoveredPost] = []
-    for item in data.get("items", []):
-        snippet = item.get("snippet", {})
-        video_id = snippet.get("resourceId", {}).get("videoId", "")
-        published = snippet.get("publishedAt", "")
+    root = ET.fromstring(resp.text)
+    ns = {"atom": "http://www.w3.org/2005/Atom", "yt": "http://www.youtube.com/xml/schemas/2015"}
+    for entry in root.findall("atom:entry", ns)[:count]:
+        video_id = (entry.findtext("yt:videoId", default="", namespaces=ns) or "").strip()
+        published = (entry.findtext("atom:published", default="", namespaces=ns) or "").strip()
+        if not video_id:
+            continue
         ts = 0.0
         if published:
             from datetime import datetime
@@ -263,6 +273,76 @@ def discover_youtube(source_id: str, backfill: bool = False) -> list[DiscoveredP
             timestamp=ts,
         ))
     return result
+
+
+def _discover_youtube_via_ytdlp(source_id: str, count: int) -> list[DiscoveredPost]:
+    try:
+        from yt_dlp import YoutubeDL
+    except Exception:
+        return []
+
+    handle = source_id.strip().strip("/")
+    url = f"https://www.youtube.com/{handle}"
+    ydl_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "logger": _QuietYtdlpLogger(),
+        "extract_flat": True,
+        "playlistend": count,
+        "skip_download": True,
+    }
+    try:
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+    except Exception:
+        return []
+
+    entries = info.get("entries", []) if isinstance(info, dict) else []
+    result: list[DiscoveredPost] = []
+    seen: set[str] = set()
+    for entry in entries[:count]:
+        if not isinstance(entry, dict):
+            continue
+        video_id = str(entry.get("id") or "").strip()
+        if not video_id or video_id in seen:
+            continue
+        seen.add(video_id)
+        video_url = str(entry.get("url") or "").strip()
+        if not video_url.startswith("http"):
+            video_url = f"https://www.youtube.com/watch?v={video_id}"
+        result.append(DiscoveredPost(external_id=video_id, url=video_url, timestamp=0))
+    return result
+
+
+def _resolve_youtube_channel_id(source_id: str) -> str:
+    cleaned = source_id.strip().strip("/")
+    if cleaned.startswith("channel/"):
+        cleaned = cleaned.split("/", 1)[1]
+    if cleaned.startswith("UC") and len(cleaned) >= 20:
+        return cleaned
+
+    handle = cleaned if cleaned.startswith("@") else f"@{cleaned}"
+    timeout = httpx.Timeout(connect=5.0, read=10.0, write=5.0, pool=5.0)
+    resp = httpx.get(
+        f"https://www.youtube.com/{handle}",
+        timeout=timeout,
+        follow_redirects=True,
+        headers={"User-Agent": "Mozilla/5.0", "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8"},
+    )
+    resp.raise_for_status()
+    html = resp.text
+
+    patterns = [
+        r'"channelId":"(UC[A-Za-z0-9_-]+)"',
+        r'"browseId":"(UC[A-Za-z0-9_-]+)"',
+        r'https://www\.youtube\.com/channel/(UC[A-Za-z0-9_-]+)',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, html)
+        if match:
+            return match.group(1)
+
+    raise RuntimeError(f"YouTube channel id not found for: {source_id}")
 
 
 # ---------------------------------------------------------------------------
@@ -292,6 +372,46 @@ def discover_tiktok(source_id: str, backfill: bool = False) -> list[DiscoveredPo
             url=f"https://www.tiktok.com/@{source_id}/video/{vid}",
             timestamp=0,
         ))
+    if result:
+        return result
+    return _discover_tiktok_via_ytdlp(source_id, count=limit)
+
+
+def _discover_tiktok_via_ytdlp(source_id: str, count: int) -> list[DiscoveredPost]:
+    try:
+        from yt_dlp import YoutubeDL
+    except Exception:
+        return []
+
+    username = source_id.strip().lstrip("@")
+    ydl_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "logger": _QuietYtdlpLogger(),
+        "extract_flat": True,
+        "playlistend": count,
+        "skip_download": True,
+    }
+    try:
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(f"https://www.tiktok.com/@{username}", download=False)
+    except Exception:
+        return []
+
+    entries = info.get("entries", []) if isinstance(info, dict) else []
+    result: list[DiscoveredPost] = []
+    seen: set[str] = set()
+    for entry in entries[:count]:
+        if not isinstance(entry, dict):
+            continue
+        video_id = str(entry.get("id") or "").strip()
+        if not video_id or video_id in seen:
+            continue
+        seen.add(video_id)
+        video_url = str(entry.get("url") or "").strip()
+        if not video_url.startswith("http"):
+            video_url = f"https://www.tiktok.com/@{username}/video/{video_id}"
+        result.append(DiscoveredPost(external_id=video_id, url=video_url, timestamp=0))
     return result
 
 
@@ -301,31 +421,173 @@ def discover_tiktok(source_id: str, backfill: bool = False) -> list[DiscoveredPo
 
 def discover_instagram(source_id: str, backfill: bool = False) -> list[DiscoveredPost]:
     """Scrape Instagram profile for recent post/reel links."""
-    url = f"https://www.instagram.com/{source_id}/"
+    limit = 30 if backfill else 12
+    session_posts = _discover_instagram_via_session_browser(source_id, count=limit)
+    if session_posts:
+        return session_posts
+
+    ytdlp_posts = _discover_instagram_via_ytdlp(source_id, count=limit)
+    if ytdlp_posts:
+        return ytdlp_posts
+
+    url = f"https://www.instagram.com/{source_id}/reels/"
+    proxy = get_proxy_for_platform("instagram")
     timeout = httpx.Timeout(connect=5.0, read=10.0, write=5.0, pool=5.0)
-    resp = httpx.get(url, timeout=timeout, follow_redirects=True,
-                     headers={"User-Agent": "Mozilla/5.0"})
+    resp = httpx.get(
+        url,
+        timeout=timeout,
+        follow_redirects=True,
+        proxy=proxy,
+        headers={"User-Agent": "Mozilla/5.0", "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8"},
+    )
     resp.raise_for_status()
     html = resp.text
 
-    import re
-    post_ids = re.findall(r'"shortcode":"([A-Za-z0-9_-]+)"', html)
-    if not post_ids:
-        post_ids = re.findall(r'/p/([A-Za-z0-9_-]+)', html)
-    if not post_ids:
-        post_ids = re.findall(r'/reel/([A-Za-z0-9_-]+)', html)
-
     seen: set[str] = set()
-    limit = 30 if backfill else 12
     result: list[DiscoveredPost] = []
-    for sid in post_ids[:limit]:
+    matches = re.findall(r'/(p|reel|reels)/([A-Za-z0-9_-]+)', html)
+    if not matches:
+        matches = [("reel", sid) for sid in re.findall(r'"shortcode":"([A-Za-z0-9_-]+)"', html)]
+
+    for kind, sid in matches[:limit]:
         if sid in seen:
             continue
         seen.add(sid)
-        # Determine if it's a reel or post by checking context
+        canonical_kind = "reel" if kind in {"reel", "reels"} else "p"
         result.append(DiscoveredPost(
             external_id=sid,
-            url=f"https://www.instagram.com/p/{sid}/",
+            url=f"https://www.instagram.com/{canonical_kind}/{sid}/",
+            timestamp=0,
+        ))
+    return result
+
+
+def _instagram_storage_state_path() -> Path:
+    return Path("uploads") / "instagram_storage_state.json"
+
+
+def _playwright_proxy(proxy: str | None) -> dict | None:
+    if not proxy:
+        return None
+    parsed = urlparse(proxy)
+    if not parsed.scheme or not parsed.hostname:
+        return {"server": proxy}
+    result = {"server": f"{parsed.scheme}://{parsed.hostname}:{parsed.port}"}
+    if parsed.username:
+        result["username"] = parsed.username
+    if parsed.password:
+        result["password"] = parsed.password
+    return result
+
+
+def _discover_instagram_via_session_browser(source_id: str, count: int) -> list[DiscoveredPost]:
+    session_path = _instagram_storage_state_path()
+    if not session_path.exists():
+        return []
+
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception:
+        return []
+
+    username = source_id.strip().strip("/")
+    proxy = _playwright_proxy(get_proxy_for_platform("instagram"))
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context_kwargs = {
+                "storage_state": str(session_path),
+                "locale": "ru-RU",
+                "user_agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/140.0.0.0 Safari/537.36"
+                ),
+            }
+            if proxy:
+                context_kwargs["proxy"] = proxy
+            context = browser.new_context(**context_kwargs)
+            page = context.new_page()
+            page.goto(f"https://www.instagram.com/{username}/reels/", wait_until="domcontentloaded", timeout=45_000)
+            page.wait_for_timeout(4_000)
+            hrefs = page.locator('a[href*="/reel/"], a[href*="/reels/"], a[href*="/p/"]').evaluate_all(
+                "(nodes) => nodes.map((node) => node.getAttribute('href')).filter(Boolean)"
+            )
+            html = page.content()
+            context.storage_state(path=str(session_path))
+            browser.close()
+    except Exception:
+        return []
+
+    seen: set[str] = set()
+    result: list[DiscoveredPost] = []
+    for href in list(hrefs) + re.findall(r"/(reel|reels|p)/([A-Za-z0-9_-]+)", html):
+        if isinstance(href, tuple):
+            kind, shortcode = href
+        else:
+            match = re.search(r"/(reel|reels|p)/([A-Za-z0-9_-]+)", str(href))
+            if not match:
+                continue
+            kind, shortcode = match.groups()
+        if shortcode in seen:
+            continue
+        seen.add(shortcode)
+        canonical_kind = "reel" if kind in {"reel", "reels"} else "p"
+        result.append(DiscoveredPost(
+            external_id=shortcode,
+            url=f"https://www.instagram.com/{canonical_kind}/{shortcode}/",
+            timestamp=0,
+        ))
+        if len(result) >= count:
+            break
+    return result
+
+
+def _discover_instagram_via_ytdlp(source_id: str, count: int) -> list[DiscoveredPost]:
+    try:
+        from yt_dlp import YoutubeDL
+    except Exception:
+        return []
+
+    username = source_id.strip().strip("/")
+    ydl_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "logger": _QuietYtdlpLogger(),
+        "extract_flat": True,
+        "playlistend": count,
+        "skip_download": True,
+    }
+    proxy = get_proxy_for_platform("instagram")
+    if proxy:
+        ydl_opts["proxy"] = proxy
+
+    try:
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(f"https://www.instagram.com/{username}/reels/", download=False)
+    except Exception:
+        return []
+
+    entries = info.get("entries", []) if isinstance(info, dict) else []
+    result: list[DiscoveredPost] = []
+    seen: set[str] = set()
+    for entry in entries[:count]:
+        if not isinstance(entry, dict):
+            continue
+        shortcode = str(entry.get("id") or entry.get("display_id") or "").strip()
+        video_url = str(entry.get("url") or entry.get("webpage_url") or "").strip()
+        match = re.search(r"/(p|reel|reels)/([A-Za-z0-9_-]+)", video_url)
+        if match:
+            kind, shortcode = match.groups()
+        else:
+            kind = "reel"
+        if not shortcode or shortcode in seen:
+            continue
+        seen.add(shortcode)
+        canonical_kind = "reel" if kind in {"reel", "reels"} else "p"
+        result.append(DiscoveredPost(
+            external_id=shortcode,
+            url=f"https://www.instagram.com/{canonical_kind}/{shortcode}/",
             timestamp=0,
         ))
     return result

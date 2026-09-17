@@ -81,7 +81,10 @@ def _parse_source_url(url: str) -> tuple[Platform, str, str]:
 
     # Instagram
     if host == "instagram.com":
-        username = path.split("/")[0]
+        first_segment = path.split("/")[0]
+        if first_segment in {"p", "reel", "reels", "tv"}:
+            raise ValueError("Для вкладки групп нужна ссылка на Instagram-аккаунт, а не на отдельный пост или reels")
+        username = first_segment
         if username:
             return Platform.instagram, username, username
 
