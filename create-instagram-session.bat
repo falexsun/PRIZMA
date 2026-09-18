@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
-REM Content Tracker - create local Instagram browser session for reels discovery
+REM Content Tracker - create Instagram browser session for reels discovery
 REM Usage: create-instagram-session.bat
 
 cd /d "%~dp0"
@@ -17,8 +17,111 @@ if not exist backend\tools\create_instagram_session.py (
     exit /b 1
 )
 
+if not exist backend\tools\save_instagram_session_from_cdp.py (
+    echo [instagram-session] backend\tools\save_instagram_session_from_cdp.py was not found.
+    echo [instagram-session] Run git pull and try again.
+    pause
+    exit /b 1
+)
+
 if not exist backend\uploads mkdir backend\uploads
 
+set "SESSION_EXIT=1"
+
+call :try_docker_session
+if "%SESSION_EXIT%"=="0" goto verify_session
+
+echo.
+echo [instagram-session] Docker browser-session path was not completed.
+echo [instagram-session] Falling back to local Python setup...
+echo.
+
+call :try_local_python_session
+if not "%SESSION_EXIT%"=="0" (
+    echo [instagram-session] Session creation failed.
+    pause
+    exit /b %SESSION_EXIT%
+)
+
+:verify_session
+if not exist backend\uploads\instagram_storage_state.json (
+    echo [instagram-session] Session file was not created.
+    pause
+    exit /b 1
+)
+
+echo.
+echo [instagram-session] Session saved:
+echo   backend\uploads\instagram_storage_state.json
+echo.
+
+call :restart_docker_services
+if not "%SESSION_EXIT%"=="0" exit /b %SESSION_EXIT%
+
+echo.
+echo === Done ===
+echo Instagram session is ready. Reels discovery will use the saved browser session.
+echo.
+pause
+exit /b 0
+
+:try_docker_session
+set "SESSION_EXIT=1"
+where docker >nul 2>nul
+if errorlevel 1 (
+    echo [instagram-session] Docker was not found.
+    exit /b 0
+)
+
+docker compose version >nul 2>nul
+if errorlevel 1 (
+    echo [instagram-session] Docker Compose was not found.
+    exit /b 0
+)
+
+call :find_browser
+if not defined BROWSER_EXE (
+    echo [instagram-session] Chrome or Edge was not found for local login window.
+    exit /b 0
+)
+
+set "CDP_PROFILE=%TEMP%\content-tracker-instagram-browser"
+echo [instagram-session] Opening local browser for Instagram login...
+echo [instagram-session] Browser: "%BROWSER_EXE%"
+echo.
+echo If Instagram does not open in this browser, use your system VPN/proxy and run this file again.
+echo.
+start "" "%BROWSER_EXE%" --remote-debugging-port=9222 --remote-debugging-address=0.0.0.0 --remote-allow-origins=* --user-data-dir="%CDP_PROFILE%" "https://www.instagram.com/accounts/login/"
+
+echo Log in to Instagram in the opened browser window.
+echo Complete 2FA/challenge if Instagram asks for it.
+echo.
+pause
+
+echo [instagram-session] Saving session with Docker Python...
+docker compose build api
+if errorlevel 1 (
+    set "SESSION_EXIT=1"
+    exit /b 0
+)
+docker compose run --rm --no-deps --entrypoint python api tools/save_instagram_session_from_cdp.py
+set "SESSION_EXIT=%ERRORLEVEL%"
+exit /b 0
+
+:find_browser
+set "BROWSER_EXE="
+if exist "%ProgramFiles%\Google\Chrome\Application\chrome.exe" set "BROWSER_EXE=%ProgramFiles%\Google\Chrome\Application\chrome.exe"
+if defined BROWSER_EXE exit /b 0
+if exist "%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe" set "BROWSER_EXE=%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"
+if defined BROWSER_EXE exit /b 0
+if exist "%LocalAppData%\Google\Chrome\Application\chrome.exe" set "BROWSER_EXE=%LocalAppData%\Google\Chrome\Application\chrome.exe"
+if defined BROWSER_EXE exit /b 0
+if exist "%ProgramFiles%\Microsoft\Edge\Application\msedge.exe" set "BROWSER_EXE=%ProgramFiles%\Microsoft\Edge\Application\msedge.exe"
+if defined BROWSER_EXE exit /b 0
+if exist "%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe" set "BROWSER_EXE=%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"
+exit /b 0
+
+:try_local_python_session
 set "PY_EXE="
 set "PY_CHECK_LOG=%TEMP%\content-tracker-python-check.log"
 set "VENV_LOG=%TEMP%\content-tracker-venv.log"
@@ -38,8 +141,8 @@ if not defined PY_EXE (
         type "%PY_CHECK_LOG%"
         echo.
     )
-    pause
-    exit /b 1
+    set "SESSION_EXIT=1"
+    exit /b 0
 )
 
 if not exist backend\.venv\Scripts\python.exe (
@@ -56,8 +159,8 @@ if not exist backend\.venv\Scripts\python.exe (
         )
         echo [instagram-session] If this says that venv or ensurepip is unavailable, reinstall Python from python.org.
         echo [instagram-session] If Python was installed from Microsoft Store, uninstall it and install Python from python.org.
-        pause
-        exit /b 1
+        set "SESSION_EXIT=1"
+        exit /b 0
     )
 )
 
@@ -67,16 +170,16 @@ echo [instagram-session] Installing Playwright if needed...
 "%VENV_PY%" -m pip install --disable-pip-version-check --quiet "playwright==1.61.0"
 if errorlevel 1 (
     echo [instagram-session] Failed to install Playwright.
-    pause
-    exit /b 1
+    set "SESSION_EXIT=1"
+    exit /b 0
 )
 
 echo [instagram-session] Making sure Chromium is installed...
 "%VENV_PY%" -m playwright install chromium
 if errorlevel 1 (
     echo [instagram-session] Failed to install Playwright Chromium.
-    pause
-    exit /b 1
+    set "SESSION_EXIT=1"
+    exit /b 0
 )
 
 echo.
@@ -88,52 +191,29 @@ cd backend
 "%~dp0backend\.venv\Scripts\python.exe" tools\create_instagram_session.py --ask-proxy
 set "SESSION_EXIT=%ERRORLEVEL%"
 cd /d "%~dp0"
+exit /b 0
 
-if not "%SESSION_EXIT%"=="0" (
-    echo [instagram-session] Session creation failed.
-    pause
-    exit /b %SESSION_EXIT%
-)
-
-if not exist backend\uploads\instagram_storage_state.json (
-    echo [instagram-session] Session file was not created.
-    pause
-    exit /b 1
-)
-
-echo.
-echo [instagram-session] Session saved:
-echo   backend\uploads\instagram_storage_state.json
-echo.
-
+:restart_docker_services
+set "SESSION_EXIT=0"
 where docker >nul 2>nul
 if errorlevel 1 (
     echo [instagram-session] Docker was not found, skipping service restart.
     echo [instagram-session] Restart API and worker-heavy later after Docker is available.
-    pause
     exit /b 0
 )
 
 docker compose version >nul 2>nul
 if errorlevel 1 (
     echo [instagram-session] Docker Compose was not found, skipping service restart.
-    pause
     exit /b 0
 )
 
 echo [instagram-session] Restarting API and Instagram worker...
 docker compose up -d api worker-heavy
-if errorlevel 1 (
+set "SESSION_EXIT=%ERRORLEVEL%"
+if not "%SESSION_EXIT%"=="0" (
     echo [instagram-session] Docker restart failed. The session file is saved, but services were not restarted.
-    pause
-    exit /b 1
 )
-
-echo.
-echo === Done ===
-echo Instagram session is ready. Reels discovery will use the saved browser session.
-echo.
-pause
 exit /b 0
 
 :select_python
