@@ -1,5 +1,5 @@
 @echo off
-setlocal
+setlocal EnableExtensions DisableDelayedExpansion
 REM Content Tracker - create local Instagram browser session for reels discovery
 REM Usage: create-instagram-session.bat
 
@@ -19,27 +19,43 @@ if not exist backend\tools\create_instagram_session.py (
 
 if not exist backend\uploads mkdir backend\uploads
 
-set "PY_CMD="
-where py >nul 2>nul
-if not errorlevel 1 (
-    set "PY_CMD=py -3"
-) else (
-    where python >nul 2>nul
-    if not errorlevel 1 set "PY_CMD=python"
-)
+set "PY_EXE="
+set "PY_CHECK_LOG=%TEMP%\content-tracker-python-check.log"
+set "VENV_LOG=%TEMP%\content-tracker-venv.log"
 
-if not defined PY_CMD (
-    echo [instagram-session] Python was not found.
-    echo [instagram-session] Install Python 3.11+ and enable "Add Python to PATH", then run this file again.
+call :select_python
+if not defined PY_EXE (
+    call :install_python_with_winget
+    call :select_python
+)
+if not defined PY_EXE (
+    echo [instagram-session] Working Python 3 was not found.
+    echo [instagram-session] Install Python 3.11+ from https://www.python.org/downloads/windows/
+    echo [instagram-session] Important: enable "Add python.exe to PATH" during installation.
+    echo.
+    if exist "%PY_CHECK_LOG%" (
+        echo [instagram-session] Last Python check output:
+        type "%PY_CHECK_LOG%"
+        echo.
+    )
     pause
     exit /b 1
 )
 
 if not exist backend\.venv\Scripts\python.exe (
     echo [instagram-session] Creating local Python environment...
-    %PY_CMD% -m venv backend\.venv
+    "%PY_EXE%" -m venv --clear backend\.venv > "%VENV_LOG%" 2>&1
     if errorlevel 1 (
         echo [instagram-session] Failed to create backend\.venv.
+        echo [instagram-session] Python used: "%PY_EXE%"
+        echo.
+        if exist "%VENV_LOG%" (
+            echo [instagram-session] Python error output:
+            type "%VENV_LOG%"
+            echo.
+        )
+        echo [instagram-session] If this says that venv or ensurepip is unavailable, reinstall Python from python.org.
+        echo [instagram-session] If Python was installed from Microsoft Store, uninstall it and install Python from python.org.
         pause
         exit /b 1
     )
@@ -118,3 +134,47 @@ echo === Done ===
 echo Instagram session is ready. Reels discovery will use the saved browser session.
 echo.
 pause
+exit /b 0
+
+:select_python
+call :try_python "py -3"
+if defined PY_EXE exit /b 0
+call :try_python "%LocalAppData%\Programs\Python\Python312\python.exe"
+if defined PY_EXE exit /b 0
+call :try_python "%LocalAppData%\Programs\Python\Python311\python.exe"
+if defined PY_EXE exit /b 0
+call :try_python "%ProgramFiles%\Python312\python.exe"
+if defined PY_EXE exit /b 0
+call :try_python "%ProgramFiles%\Python311\python.exe"
+if defined PY_EXE exit /b 0
+call :try_python "python"
+if defined PY_EXE exit /b 0
+call :try_python "python3"
+exit /b 0
+
+:try_python
+set "PY_CANDIDATE=%~1"
+if not defined PY_CANDIDATE exit /b 1
+if not exist "%PY_CANDIDATE%" (
+    echo %PY_CANDIDATE% | findstr /i "\.exe" >nul 2>nul
+    if not errorlevel 1 exit /b 1
+)
+echo %PY_CANDIDATE% | findstr /i "\.exe" >nul 2>nul
+if not errorlevel 1 (
+    "%PY_CANDIDATE%" -c "import sys, venv; print(sys.executable)" > "%PY_CHECK_LOG%" 2>&1
+) else (
+    %PY_CANDIDATE% -c "import sys, venv; print(sys.executable)" > "%PY_CHECK_LOG%" 2>&1
+)
+if errorlevel 1 exit /b 1
+for /f "usebackq delims=" %%P in ("%PY_CHECK_LOG%") do (
+    set "PY_EXE=%%P"
+    exit /b 0
+)
+exit /b 1
+
+:install_python_with_winget
+where winget >nul 2>nul
+if errorlevel 1 exit /b 0
+echo [instagram-session] Python 3 was not found. Trying to install Python 3.12 with winget...
+winget install --id Python.Python.3.12 -e --source winget --silent --accept-package-agreements --accept-source-agreements
+exit /b 0
