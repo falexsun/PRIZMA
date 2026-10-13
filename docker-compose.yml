@@ -70,7 +70,7 @@ services:
       redis:
         condition: service_healthy
     ports:
-      - "8000:8000"
+      - "0.0.0.0:8000:8000"
     volumes:
       - ./backend/uploads:/app/uploads
       - ./backend/max_session:/app/max_session
@@ -160,7 +160,7 @@ services:
       api:
         condition: service_healthy
     ports:
-      - "5000:5000"
+      - "0.0.0.0:5000:5000"
     logging:
       driver: json-file
       options:
