@@ -1,3 +1,4 @@
+import asyncio
 import re
 from pathlib import Path
 from typing import Literal
@@ -6,6 +7,7 @@ from uuid import UUID
 from app.core.config import settings
 
 MaxAuthStage = Literal["idle", "code_required", "password_required", "authenticated", "error"]
+_MAX_SESSION_CHECK_TIMEOUT = 20
 
 
 class MaxAuthError(RuntimeError):
@@ -42,6 +44,7 @@ class MaxAuthManager:
             }
 
         client = None
+        skip_close = False
         try:
             from app.services.max_client import ContentTrackerMaxClient
             from app.services.max_user_agent import make_max_user_agent
@@ -52,21 +55,50 @@ class MaxAuthManager:
                 headers=make_max_user_agent(),
                 reconnect=False,
             )
-            await client.connect(client.user_agent)
-            await client._sync(client.user_agent)
+            await asyncio.wait_for(client.connect(client.user_agent), timeout=_MAX_SESSION_CHECK_TIMEOUT)
+            await asyncio.wait_for(client._sync(client.user_agent), timeout=_MAX_SESSION_CHECK_TIMEOUT)
             return {
                 "configured": True,
                 "valid": True,
                 "message": "MAX session is active.",
             }
         except Exception as exc:
+            skip_close = self._is_invalid_session_error(exc)
+            message = self._friendly_session_error(exc)
             return {
                 "configured": True,
                 "valid": False,
-                "message": f"MAX session is not working: {exc}",
+                "message": message,
             }
         finally:
-            await self._close_client(client)
+            if not skip_close:
+                await self._close_client(client)
+
+    @staticmethod
+    def _friendly_session_error(exc: Exception) -> str:
+        if MaxAuthManager._is_invalid_session_error(exc):
+            return "MAX session expired. Sign in to MAX again."
+        if isinstance(exc, TimeoutError) or isinstance(exc, asyncio.TimeoutError):
+            return "MAX session check timed out. Sign in to MAX again if the issue repeats."
+        return f"MAX session is not working: {exc}"
+
+    @staticmethod
+    def _is_invalid_session_error(exc: Exception) -> bool:
+        text = str(exc)
+        return "FAIL_LOGIN_TOKEN" in text or "login.token" in text
+
+    @staticmethod
+    async def _close_client(client) -> None:
+        if client is None:
+            return
+        try:
+            await asyncio.wait_for(client.close(), timeout=5)
+        except Exception:
+            try:
+                if hasattr(client, "stop"):
+                    await asyncio.wait_for(client.stop(), timeout=5)
+            except Exception:
+                pass
 
     async def start(self, phone: str, target_url: str = "https://max.ru/") -> dict[str, str]:
         del target_url  # Kept in the API contract for backwards compatibility.
@@ -201,18 +233,6 @@ class MaxAuthManager:
     @staticmethod
     def _login_token(result: dict) -> str | None:
         return result.get("tokenAttrs", {}).get("LOGIN", {}).get("token")
-
-    @staticmethod
-    async def _close_client(client) -> None:
-        if client is None:
-            return
-        try:
-            await client.close()
-        except Exception:
-            try:
-                await client.stop()
-            except Exception:
-                pass
 
     @staticmethod
     def _normalize_phone(phone: str) -> str:
