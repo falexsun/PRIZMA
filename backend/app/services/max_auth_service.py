@@ -2,7 +2,6 @@ import asyncio
 import re
 from pathlib import Path
 from typing import Literal
-from uuid import UUID
 
 from app.core.config import settings
 
@@ -24,6 +23,7 @@ class MaxAuthManager:
         self._temp_token: str | None = None
         self._device_id: str | None = None
         self._track_id: str | None = None
+        self._auth_config = None
 
     @property
     def phone(self) -> str:
@@ -44,26 +44,20 @@ class MaxAuthManager:
             }
 
         client = None
-        skip_close = False
         try:
             from app.services.max_client import ContentTrackerMaxClient
-            from app.services.max_user_agent import make_max_user_agent
 
             client = ContentTrackerMaxClient(
                 phone=phone_path.read_text(encoding="utf-8").strip(),
                 work_dir=str(work_dir),
-                headers=make_max_user_agent(),
-                reconnect=False,
             )
-            await asyncio.wait_for(client.connect(client.user_agent), timeout=_MAX_SESSION_CHECK_TIMEOUT)
-            await asyncio.wait_for(client._sync(client.user_agent), timeout=_MAX_SESSION_CHECK_TIMEOUT)
+            await asyncio.wait_for(client.connect(), timeout=_MAX_SESSION_CHECK_TIMEOUT)
             return {
                 "configured": True,
                 "valid": True,
                 "message": "MAX session is active.",
             }
         except Exception as exc:
-            skip_close = self._is_invalid_session_error(exc)
             message = self._friendly_session_error(exc)
             return {
                 "configured": True,
@@ -71,8 +65,7 @@ class MaxAuthManager:
                 "message": message,
             }
         finally:
-            if not skip_close:
-                await self._close_client(client)
+            await self._close_client(client)
 
     @staticmethod
     def _friendly_session_error(exc: Exception) -> str:
@@ -85,7 +78,9 @@ class MaxAuthManager:
     @staticmethod
     def _is_invalid_session_error(exc: Exception) -> bool:
         text = str(exc)
-        return "FAIL_LOGIN_TOKEN" in text or "login.token" in text
+        return any(marker in text for marker in (
+            "FAIL_LOGIN_TOKEN", "FAIL_LOGOUT_ALL", "login.token", "login.cred",
+        ))
 
     @staticmethod
     async def _close_client(client) -> None:
@@ -107,9 +102,10 @@ class MaxAuthManager:
         client = None
         try:
             client = self._make_client(self._phone)
-            await client.connect(client.user_agent)
-            self._temp_token = await client.request_code(self._phone, language="ru")
-            self._device_id = str(client._device_id)
+            await asyncio.wait_for(client.connect_auth(), timeout=_MAX_SESSION_CHECK_TIMEOUT)
+            self._temp_token = await asyncio.wait_for(client.request_code(self._phone), timeout=_MAX_SESSION_CHECK_TIMEOUT)
+            self._auth_config = client.extra_config
+            self._device_id = client.extra_config.device_id
             self._stage = "code_required"
             self._message = "Код отправлен. Введите код из SMS."
             return self.status()
@@ -128,9 +124,9 @@ class MaxAuthManager:
 
         client = None
         try:
-            client = self._make_client(self._phone, UUID(self._device_id))
-            await client.connect(client.user_agent)
-            result = await client._send_code(code.strip(), self._temp_token)
+            client = self._make_client(self._phone, self._device_id)
+            await asyncio.wait_for(client.connect_auth(), timeout=_MAX_SESSION_CHECK_TIMEOUT)
+            result = await asyncio.wait_for(client.send_code(code.strip(), self._temp_token), timeout=_MAX_SESSION_CHECK_TIMEOUT)
             challenge = result.get("passwordChallenge") if isinstance(result, dict) else None
             if challenge and challenge.get("trackId"):
                 self._track_id = challenge["trackId"]
@@ -145,7 +141,7 @@ class MaxAuthManager:
             login_token = self._login_token(result)
             if not login_token:
                 raise MaxAuthError("MAX не подтвердил SMS-код.")
-            self._save_token(client, login_token)
+            await self._save_token(client, login_token)
             self._authenticated()
             return self.status()
         except MaxAuthError:
@@ -163,26 +159,15 @@ class MaxAuthManager:
 
         client = None
         try:
-            from pymax import Opcode
-            from pymax.payloads import CheckPasswordChallengePayload
-
-            client = self._make_client(self._phone, UUID(self._device_id))
-            await client.connect(client.user_agent)
-            payload = CheckPasswordChallengePayload(
-                track_id=self._track_id,
-                password=password,
-            ).model_dump(by_alias=True)
-            response = await client._send_and_wait(
-                opcode=Opcode.AUTH_LOGIN_CHECK_PASSWORD,
-                payload=payload,
-            )
-            result = response.get("payload", {}) if isinstance(response, dict) else {}
+            client = self._make_client(self._phone, self._device_id)
+            await asyncio.wait_for(client.connect_auth(), timeout=_MAX_SESSION_CHECK_TIMEOUT)
+            result = await asyncio.wait_for(client.check_password(self._track_id, password), timeout=_MAX_SESSION_CHECK_TIMEOUT)
             if result.get("error"):
                 raise MaxAuthError("MAX отклонил пароль двухфакторной аутентификации.")
             login_token = self._login_token(result)
             if not login_token:
                 raise MaxAuthError("MAX не вернул токен после проверки пароля.")
-            self._save_token(client, login_token)
+            await self._save_token(client, login_token)
             self._authenticated()
             return self.status()
         except MaxAuthError:
@@ -197,21 +182,18 @@ class MaxAuthManager:
         self._message = "Вход отменён."
         return self.status()
 
-    def _make_client(self, phone: str, device_id: UUID | None = None):
+    def _make_client(self, phone: str, device_id: str | None = None):
         try:
-            from pymax import SocketMaxClient
-            from app.services.max_user_agent import make_max_user_agent
+            from app.services.max_client import ContentTrackerMaxClient
         except ImportError as exc:
             raise MaxAuthError(
                 "Библиотека MAX API не установлена. Пересоберите контейнеры api и worker."
             ) from exc
 
-        return SocketMaxClient(
+        return ContentTrackerMaxClient(
             phone=phone,
             work_dir=str(self._work_dir()),
-            headers=make_max_user_agent(),
-            device_id=device_id,
-            reconnect=False,
+            auth_config=self._auth_config if device_id else None,
         )
 
     def _work_dir(self) -> Path:
@@ -220,8 +202,8 @@ class MaxAuthManager:
         work_dir.mkdir(parents=True, exist_ok=True)
         return work_dir
 
-    def _save_token(self, client, token: str) -> None:
-        client._database.update_auth_token(client._device_id, token)
+    async def _save_token(self, client, token: str) -> None:
+        await client.save_token(token)
         (self._work_dir() / "phone.txt").write_text(self._phone, encoding="utf-8")
 
     def _authenticated(self) -> None:
@@ -232,7 +214,7 @@ class MaxAuthManager:
 
     @staticmethod
     def _login_token(result: dict) -> str | None:
-        return result.get("tokenAttrs", {}).get("LOGIN", {}).get("token")
+        return (result.get("tokenAttrs", {}).get("LOGIN") or {}).get("token")
 
     @staticmethod
     def _normalize_phone(phone: str) -> str:
@@ -250,6 +232,7 @@ class MaxAuthManager:
         self._temp_token = None
         self._device_id = None
         self._track_id = None
+        self._auth_config = None
 
 
 max_auth_manager = MaxAuthManager()

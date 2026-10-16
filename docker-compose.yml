@@ -64,6 +64,9 @@ services:
       context: ./backend
     restart: unless-stopped
     env_file: .env
+    dns:
+      - ${DNS_PRIMARY:-1.1.1.1}
+      - ${DNS_SECONDARY:-8.8.8.8}
     depends_on:
       postgres:
         condition: service_healthy
@@ -92,6 +95,9 @@ services:
       context: ./backend
     restart: unless-stopped
     env_file: .env
+    dns:
+      - ${DNS_PRIMARY:-1.1.1.1}
+      - ${DNS_SECONDARY:-8.8.8.8}
     depends_on:
       api:
         condition: service_healthy
@@ -115,6 +121,9 @@ services:
       context: ./backend
     restart: unless-stopped
     env_file: .env
+    dns:
+      - ${DNS_PRIMARY:-1.1.1.1}
+      - ${DNS_SECONDARY:-8.8.8.8}
     depends_on:
       api:
         condition: service_healthy

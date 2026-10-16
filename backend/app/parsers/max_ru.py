@@ -77,10 +77,8 @@ def _decode_message_id(encoded: str) -> int:
 
 async def _fetch_via_pymax(url: str) -> Metrics:
     """Read public post statistics through the authenticated MAX socket API."""
-    skip_close = False
     try:
         from app.services.max_client import ContentTrackerMaxClient
-        from app.services.max_user_agent import make_max_user_agent
     except ImportError as exc:
         raise ParserUnavailableError("maxapi-python is not installed") from exc
 
@@ -99,20 +97,15 @@ async def _fetch_via_pymax(url: str) -> Metrics:
     client = ContentTrackerMaxClient(
         phone=phone_path.read_text(encoding="utf-8").strip(),
         work_dir=str(work_dir),
-        headers=make_max_user_agent(),
-        reconnect=False,
     )
     try:
-        await asyncio.wait_for(client.connect(client.user_agent), timeout=_PYMAX_OPERATION_TIMEOUT)
-        # A socket handshake alone leaves the session in AUTHENTICATED state.
-        # Link and message methods require the post-login sync to reach ONLINE.
-        await asyncio.wait_for(client._sync(client.user_agent), timeout=_PYMAX_OPERATION_TIMEOUT)
-        from pymax import Opcode
+        await asyncio.wait_for(client.connect(), timeout=_PYMAX_OPERATION_TIMEOUT)
+        from pymax.protocol import Opcode
 
         # LINK_INFO validates both the channel and the encoded post id without
         # subscribing the account to the channel.
         link_response = await asyncio.wait_for(
-            client._send_and_wait(
+            client.request(
                 opcode=Opcode.LINK_INFO,
                 payload={"link": url},
             ),
@@ -130,7 +123,7 @@ async def _fetch_via_pymax(url: str) -> Metrics:
         # channels. CHAT_HISTORY contains the same public data in
         # message.stats.views and also includes reactionInfo.
         history_response = await asyncio.wait_for(
-            client._send_and_wait(
+            client.request(
                 opcode=Opcode.CHAT_HISTORY,
                 payload={
                     "chatId": int(channel["id"]),
@@ -166,22 +159,22 @@ async def _fetch_via_pymax(url: str) -> Metrics:
         )
     except Exception as exc:
         if _is_invalid_max_login(exc):
-            skip_close = True
             raise ParserUnavailableError("MAX session expired. Sign in to MAX again.") from exc
         if isinstance(exc, TimeoutError) or isinstance(exc, asyncio.TimeoutError):
             raise ParserUnavailableError("MAX socket API timed out. Try again later.") from exc
         raise
     finally:
-        if not skip_close:
-            try:
-                await asyncio.wait_for(client.close(), timeout=5)
-            except Exception:
-                pass
+        try:
+            await asyncio.wait_for(client.close(), timeout=5)
+        except Exception:
+            pass
 
 
 def _is_invalid_max_login(exc: Exception) -> bool:
     text = str(exc)
-    return "FAIL_LOGIN_TOKEN" in text or "login.token" in text
+    return any(marker in text for marker in (
+        "FAIL_LOGIN_TOKEN", "FAIL_LOGOUT_ALL", "login.token", "login.cred",
+    ))
 
 
 async def _render_and_extract(url: str) -> Metrics:
